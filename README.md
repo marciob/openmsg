@@ -113,13 +113,26 @@ An agent with no push entry point needs its hook:
 openmsg install --hooks
 ```
 
+## How each vendor lets a message in
+
+`research/2026-09-19-transport-research.md` is the work that produced this
+design. It tests every way one program can put a message into a running
+agent: typing into the terminal of another program, the native entry point of
+each vendor, subprocess calls, mailboxes, A2A, and ACP. Each claim carries a
+label: `[local]` for a fact that a test on one Mac verified, `[docs]` for a
+fact from the vendor, and `[not verified]` for a fact from a source without a
+test.
+
+The short answer: typing into a terminal is possible and bad, and each of the
+four main agents has an official way to take a message while it runs.
+
 ## Spec
 
 The protocol has a written specification: version 0.1 for the agents of one
 person on one machine, and version 0.2 for the agents of different people on
 one project. The code implements both, and the fourteen acceptance cases of
-0.2 pass as tests. Those documents are working material, and they stay
-outside this repository. Ask for a copy.
+0.2 pass as tests. Those documents stay outside this repository. Ask for a
+copy.
 
 ## License
 
