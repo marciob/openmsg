@@ -3,8 +3,41 @@
   "version": "0.0.1",
   "description": "Messages between AI coding agents of different vendors, on one machine.",
   "type": "module",
-  "bin": { "openmsg": "src/cli.mjs" },
-  "engines": { "node": ">=22" },
-  "files": ["src", "README.md"],
-  "license": "MIT"
+  "bin": {
+    "openmsg": "src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src",
+    "docs/spec",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "author": "marciob",
+  "homepage": "https://github.com/marciob/openmsg#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marciob/openmsg.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marciob/openmsg/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "opencode",
+    "cursor",
+    "gemini-cli",
+    "agent-communication",
+    "a2a",
+    "cli",
+    "interoperability"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
 }

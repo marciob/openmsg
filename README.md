@@ -48,7 +48,13 @@ loop between two agents stops.
 ## Install
 
 ```
-git clone <this repo> && cd openmsg
+npx openmsg list
+```
+
+Or from the source:
+
+```
+git clone https://github.com/marciob/openmsg.git && cd openmsg
 node src/cli.mjs list
 ```
 
