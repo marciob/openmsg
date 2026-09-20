@@ -9,9 +9,15 @@ import { address } from "./envelope.mjs";
 
 const ROOT = process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg");
 
+// The file name encodes the address. encodeURIComponent keeps the name unique,
+// because two different addresses never give the same name, and it removes the
+// characters that Windows refuses, such as the colon.
 function boxPath(agent) {
-  const safe = address(agent).replace(/[^A-Za-z0-9._-]/g, "_");
-  return path.join(ROOT, "inbox", `${safe}.jsonl`);
+  return path.join(ROOT, "inbox", `${encodeURIComponent(address(agent))}.jsonl`);
+}
+
+export function addressOfFile(file) {
+  return decodeURIComponent(path.basename(file, ".jsonl"));
 }
 
 export function put(agent, message, status) {

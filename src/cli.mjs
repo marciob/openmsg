@@ -8,6 +8,8 @@ import * as opencode from "./adapters/opencode.mjs";
 import * as codex from "./adapters/codex.mjs";
 import { installGlobal, installProject, uninstall, GLOBAL_TARGETS, PROJECT_FILES } from "./install.mjs";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import path from "node:path";
 
 const USAGE = `openmsg — messages between AI coding agents
 
@@ -77,13 +79,28 @@ async function cmdInbox(args) {
   }
 }
 
+// Agents read the instruction block. It says "openmsg" when the command is on
+// the PATH of the user, and the full path to the file when it is not.
+function commandName() {
+  const mine = fs.realpathSync(fileURLToPath(new URL("cli.mjs", import.meta.url)));
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    const candidate = path.join(dir, "openmsg");
+    try {
+      if (fs.realpathSync(candidate) === mine) return "openmsg";
+    } catch {
+      // The name is not in this directory.
+    }
+  }
+  return `node ${mine}`;
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === "list") await cmdList();
   else if (cmd === "send") await cmdSend(args[0], args.slice(1).join(" "));
   else if (cmd === "inbox") await cmdInbox(args);
   else if (cmd === "install") {
-    const cliPath = `node ${fileURLToPath(new URL("cli.mjs", import.meta.url))}`;
+    const cliPath = commandName();
     const rows = args.includes("--project")
       ? installProject(args.find((a) => !a.startsWith("--")) ?? process.cwd(), cliPath)
       : installGlobal(cliPath);
