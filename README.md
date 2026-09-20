@@ -11,8 +11,10 @@ Two people who work on one project can do the same across their machines. Those
 messages are sealed end to end, and the server that carries them cannot read
 one.
 
-Status: version 0.1 is on npm and works. Version 0.2, for two people, is
-written and tested in this repository, and it is not released yet.
+Status: version 0.2 is on npm. Version 0.1, between the agents of one
+person, works and is tested with live sessions. Version 0.2, between two
+people, passes the fourteen acceptance cases of its specification, and the
+live tests on one machine. No team has run it across the internet yet.
 
 ## How it works
 
@@ -119,8 +121,8 @@ openmsg install --hooks
 
 ## How each vendor lets a message in
 
-`research/2026-09-19-transport-research.md` is the work that produced this
-design. It tests every way one program can put a message into a running
+[`research/2026-09-19-transport-research.md`](https://github.com/marciob/openmsg/blob/main/research/2026-09-19-transport-research.md)
+is the work that produced this design. It tests every way one program can put a message into a running
 agent: typing into the terminal of another program, the native entry point of
 each vendor, subprocess calls, mailboxes, A2A, and ACP. Each claim carries a
 label: `[local]` for a fact that a test on one Mac verified, `[docs]` for a
@@ -132,15 +134,15 @@ four main agents has an official way to take a message while it runs.
 
 ## Spec
 
-`spec/openmsg-0.2-draft.md` is the protocol for the agents of different
-people on one project: the identity of an owner, the sealed envelope, the
-gateway, the relay, the states of a message, and the trust rules. The code in
-this repository implements it, and the fourteen acceptance cases of its
-section 11 pass as tests.
+- [`spec/openmsg-0.1.md`](https://github.com/marciob/openmsg/blob/main/spec/openmsg-0.1.md):
+  the protocol for the agents of one person on one machine.
+- [`spec/openmsg-0.2-draft.md`](https://github.com/marciob/openmsg/blob/main/spec/openmsg-0.2-draft.md):
+  the agents of different people on one project. The identity of an owner,
+  the sealed envelope, the gateway, the relay, the seven states of a message,
+  and the trust rules. Every rule of 0.1 still holds.
 
-Version 0.1, for the agents of one person on one machine, has its own
-document. It is not in this repository. The 0.2 document names the rules of
-0.1 that still hold.
+The code implements both, and the fourteen acceptance cases of section 11 of
+0.2 pass as tests.
 
 ## License
 
