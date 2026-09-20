@@ -51,14 +51,18 @@ export function claudeAgents() {
 
 // OpenCode runs an HTTP server for each user interface. The port is in the
 // listening sockets of the process.
-export async function opencodeAgents() {
+export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
   let pids = [];
   try {
-    const { stdout } = await run("pgrep", ["-f", "opencode"]);
+    // `-x` matches the name of the program. `-f` matches the whole command
+    // line, and that also matches a program that only holds the word in its
+    // environment.
+    const { stdout } = await run("pgrep", ["-x", "opencode"]);
     pids = stdout.trim().split("\n").filter(Boolean);
   } catch {
     return [];
   }
+  const found = new Map();
   const out = [];
   for (const pid of pids) {
     let ports = [];
@@ -78,14 +82,25 @@ export async function opencodeAgents() {
       } catch {
         continue;
       }
-      for (const s of sessions.slice(0, 20)) {
+      // A session of OpenCode stays on disk after it ends. Only a session that
+      // changed a short time ago belongs to the work of now.
+      for (const s of sessions) {
+        const updated = s.time?.updated ?? 0;
+        if (Date.now() - updated > maxAgeMs) continue;
+        if (found.has(s.id)) continue;
+        found.set(s.id, true);
+        const title = (s.title ?? "").trim();
+        const short = title && !title.startsWith("New session")
+          ? title.slice(0, 32).replace(/\s+/g, "-")
+          : s.id.slice(-4);
         out.push({
           vendor: "opencode",
           id: s.id,
-          name: s.title ? s.title.slice(0, 40) : s.id,
+          name: `${short}-${s.id.slice(-4)}`,
           pid: Number(pid),
           cwd: s.directory ?? null,
           status: "unknown",
+          updatedAt: updated,
           transport: { kind: "http", base },
         });
       }
