@@ -76,13 +76,23 @@ async function cmdSend(target, text, replyTo = null) {
     throw new Error(`no adapter for vendor "${to.vendor}" yet`);
   }
 
-  mailbox.put(to, message, "sent");
+  // "delivered" means an adapter pushed the message into the live session.
+  // "queued" means it waits in the mailbox for an agent that reads it at the
+  // end of a turn.
+  mailbox.put(to, message, result.delivered ? "delivered" : "queued");
   console.log(`sent to ${address(to)} over ${result.transport} (${message.messageId})`);
 }
 
 async function cmdInbox(args) {
   const me = await self();
-  const rows = mailbox.list(me, { unreadOnly: !args.includes("--all") });
+  const all = mailbox.list(me, { unreadOnly: !args.includes("--all") });
+  // The sender refuses a long chain, but a sender that does not follow this
+  // spec can still write to the mailbox. The reader refuses it again.
+  const overLimit = all.filter((r) => (r.openmsg?.hops?.length ?? 0) > MAX_HOPS);
+  const rows = all.filter((r) => (r.openmsg?.hops?.length ?? 0) <= MAX_HOPS);
+  if (overLimit.length > 0) {
+    console.error(`openmsg: ${overLimit.length} message(s) refused: more than ${MAX_HOPS} hops`);
+  }
   if (args.includes("--json")) {
     console.log(JSON.stringify(rows, null, 2));
   } else if (rows.length === 0) {
