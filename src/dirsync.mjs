@@ -3,9 +3,11 @@
 // Three records, and an owner signs each one about itself:
 //
 // - `self`: "this is my public record, and my gateway answers here".
-// - `roster`: "these are the members that I accepted in this project". The
-//   other machines of that same owner apply it, because it is that person
-//   trusting that person. Nobody else applies it.
+// - `roster`: "these are the members that I accepted in this project, and
+//   this is what I let each one do". The other machines of that same owner
+//   apply it, because it is that person trusting that person. Nobody else
+//   applies it. A standing permission belongs to the person, and not to one
+//   machine, so it travels here too.
 // - `revoke-device`: "this machine of mine is gone". Everybody applies it,
 //   because only an owner says which machines belong to that owner.
 //
@@ -21,6 +23,7 @@ import { canonicalBytes } from "./canonical.mjs";
 import * as identity from "./identity.mjs";
 import * as device from "./device.mjs";
 import * as directory from "./directory.mjs";
+import * as permissions from "./permissions.mjs";
 import { settings } from "./settings.mjs";
 
 export const KINDS = ["self", "roster", "revoke-device"];
@@ -68,10 +71,17 @@ export function rosterRecord(project) {
       fingerprint: m.fingerprint,
       endpoint: m.endpoint ?? null,
     }));
+  const standing = permissions
+    .list()
+    .filter((row) => row.project === project)
+    .map((row) => ({ owner: row.owner, value: row.value }));
   return sign({
     kind: "roster",
     version: 2,
     project,
+    // accept, hold, or refuse, for each identity. The owner decided this
+    // one time, and every machine of that owner holds the same answer.
+    permissions: standing,
     // The short name that the team chose. A machine that learns a project
     // from this record shows that name, and not the opaque id.
     label: directory.project(project)?.label ?? null,
@@ -176,6 +186,15 @@ export function apply(project, records, { now = Date.now() } = {}) {
         createdAt: record.at,
       }, { source: "roster", endpoint: member.endpoint ?? null });
       out.added.push({ owner: member.ownerId, label: member.label });
+    }
+    // The owner said accept, hold, or refuse one time, on one machine. Every
+    // machine of that owner holds the same answer.
+    for (const row of record.permissions ?? []) {
+      if (!permissions.VALUES.includes(row.value)) continue;
+      if (permissions.of(project, row.owner) === row.value) continue;
+      permissions.set(project, row.owner, row.value);
+      out.permissions = out.permissions ?? [];
+      out.permissions.push(row);
     }
   }
   return out;

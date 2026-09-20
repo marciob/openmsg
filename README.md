@@ -70,7 +70,9 @@ What holds:
   people compare a fingerprint out of band before the first message.
 - **Each machine holds its own key.** The owner key stays on one machine and
   signs a delegation for the others. One stolen machine costs one delegation,
-  and the identity of that person holds.
+  and the identity of that person holds. Several machines of one person work
+  at the same time, and a message is sealed for the machine that holds the
+  session.
 - **A message never carries authority.** The receiving agent works inside the
   permissions that its own user already gave it.
 

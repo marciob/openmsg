@@ -226,7 +226,10 @@ test("a receipt for a sender that was offline waits at the relay", async () => {
   await bobAgain.ready;
   await sleep(700);
   assert.equal(relay.queued(bob.ownerId).length, 0, "the relay forgot it after the acknowledgement");
-  assert.equal(relay.receipts(alice.ownerId).length, 1, "the relay keeps the receipt for Alice");
+  assert.ok(
+    relay.receipts(alice.ownerId).some((r) => r.messageId === sent.messageId),
+    "the relay keeps the receipt for Alice",
+  );
 
   // Alice comes back, and the receipt arrives with the welcome.
   const late = [];
@@ -236,7 +239,17 @@ test("a receipt for a sender that was offline waits at the relay", async () => {
   const mine = late.find((r) => r.messageId === sent.messageId);
   assert.ok(mine, "the relay gave the receipt that it kept");
   assert.equal(mine.status, "adapter-accepted");
-  assert.equal(relay.receipts(alice.ownerId).length, 0, "the relay keeps it no longer");
+  // The relay does not know which machine of Alice sent the message, so it
+  // keeps the receipt for every machine of hers, and age takes it away.
+  assert.ok(
+    relay.receipts(alice.ownerId).some((r) => r.messageId === sent.messageId),
+    "another machine of Alice can still read it",
+  );
+  assert.equal(
+    relay.receipts(alice.ownerId, { now: Date.now() + relay.LIMITS.ageMs + 1000 }).length,
+    0,
+    "and an old receipt goes",
+  );
   as(ALICE, () => outbox.setState(sent.messageId, mine.status));
 });
 
