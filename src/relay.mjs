@@ -15,6 +15,7 @@ import os from "node:os";
 import { canonicalBytes } from "./canonical.mjs";
 import { ownerIdOf } from "./identity.mjs";
 import { verifySignedObject } from "./device.mjs";
+import { verifyRecord, MAX_RECORD_BYTES } from "./dirsync.mjs";
 import { accepts, handshake } from "./wsframe.mjs";
 
 export const LIMITS = {
@@ -22,6 +23,9 @@ export const LIMITS = {
   perOwner: 200,
   ageMs: 7 * 24 * 3600 * 1000,
   helloWindowMs: 120_000,
+  // The directory of one project: how many owners, and how big one record.
+  ownersPerProject: 200,
+  recordBytes: MAX_RECORD_BYTES,
 };
 
 export function home() {
@@ -115,6 +119,63 @@ export function receipts(owner) {
   }
 }
 
+// --- the directory of a project ---------------------------------------------
+//
+// The relay holds the records, and it reads no message. A record is signed by
+// its owner, and the owner id comes from the keys inside it, so the relay
+// verifies a record without a directory of its own.
+
+// One record for one owner, one kind, and one thing. Two machines of one
+// owner each keep their own roster, and two revoked machines each keep their
+// own record. Without this, one write covers another.
+export function recordKey(record) {
+  const parts = [record.owner, record.kind];
+  if (record.kind === "roster") parts.push(record.signature?.device ?? "owner");
+  if (record.kind === "revoke-device") parts.push(record.device);
+  return parts.map(safeName).join(".");
+}
+
+export function putRecord(project, record) {
+  const folder = dir("dir", safeName(project));
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, `${recordKey(record)}.json`);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(record));
+  fs.renameSync(tmp, file);
+  return file;
+}
+
+export function records(project) {
+  const folder = dir("dir", safeName(project));
+  let files = [];
+  try {
+    files = fs.readdirSync(folder).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const f of files) {
+    try {
+      out.push(JSON.parse(fs.readFileSync(path.join(folder, f), "utf8")));
+    } catch {
+      fs.rmSync(path.join(folder, f), { force: true });
+    }
+  }
+  return out;
+}
+
+// A reader of a project is an owner that already has a record there. A
+// project with no record at all takes its first owner, because the project id
+// is opaque and the owner that made it is the owner that publishes first.
+function mayRead(project, owner) {
+  const rows = records(project);
+  return rows.length === 0 || rows.some((r) => r.owner === owner);
+}
+
+function ownersIn(project) {
+  return new Set(records(project).map((r) => r.owner)).size;
+}
+
 // --- the server ------------------------------------------------------------
 
 export async function serve({ port = 0, host = "127.0.0.1", log = () => {} } = {}) {
@@ -159,7 +220,14 @@ export async function serve({ port = 0, host = "127.0.0.1", log = () => {} } = {
           return;
         }
         owner = named;
-        owners.get(owner)?.close();
+        // One owner, one connection. A second machine of that owner takes
+        // the place of the first, and the first hears why. Two machines of
+        // one owner online at the same time is open work.
+        const before = owners.get(owner);
+        if (before) {
+          before.send(JSON.stringify({ type: "error", error: "another machine of this owner connected" }));
+          before.close();
+        }
         owners.set(owner, connection);
         sweep(owner);
         const waiting = queued(owner);
@@ -276,6 +344,32 @@ function handle(frame, owner, answer, owners, log) {
     if (!push(owners, frame.to, { ...frame, from: owner, to: undefined }) && frame.type === "routing-request") {
       answer({ type: "routing-answer", id: frame.id, from: frame.to, error: "that gateway is offline" });
     }
+    return;
+  }
+
+  if (frame.type === "dir-publish") {
+    const record = frame.record;
+    const answer2 = (reason) => answer({ type: "dir-refused", kind: record?.kind ?? null, project: record?.project ?? null, reason });
+    if (Buffer.byteLength(JSON.stringify(record ?? {})) > LIMITS.recordBytes) return answer2("too-big");
+    // An owner publishes about itself, and about nobody else.
+    if (record?.owner !== owner) return answer2("sender-mismatch");
+    const why = verifyRecord(record);
+    if (why) return answer2(why);
+    if (!mayRead(record.project, owner) && ownersIn(record.project) >= LIMITS.ownersPerProject) {
+      return answer2("project-full");
+    }
+    putRecord(record.project, record);
+    answer({ type: "dir-stored", kind: record.kind, project: record.project });
+    log(`${owner} published a ${record.kind} record for ${record.project}`);
+    return;
+  }
+
+  if (frame.type === "dir-fetch") {
+    if (!mayRead(frame.project, owner)) {
+      answer({ type: "dir-records", id: frame.id, project: frame.project, records: [], error: "you have no record in that project" });
+      return;
+    }
+    answer({ type: "dir-records", id: frame.id, project: frame.project, records: records(frame.project) });
     return;
   }
 

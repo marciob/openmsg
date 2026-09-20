@@ -50,6 +50,8 @@ export async function open(url, handlers = {}) {
     send,
     routing,
     ack,
+    publishRecord,
+    fetchDirectory,
     close: () => {
       link.closed = true;
       connection.close();
@@ -61,6 +63,16 @@ export async function open(url, handlers = {}) {
     try {
       frame = JSON.parse(text);
     } catch {
+      return;
+    }
+    if ((frame.type === "dir-stored" || frame.type === "dir-refused") && waiting.has(`dir:${frame.project}:${frame.kind}`)) {
+      waiting.get(`dir:${frame.project}:${frame.kind}`)(frame);
+      waiting.delete(`dir:${frame.project}:${frame.kind}`);
+      return;
+    }
+    if (frame.type === "dir-records" && waiting.has(`fetch:${frame.id}`)) {
+      waiting.get(`fetch:${frame.id}`)(frame);
+      waiting.delete(`fetch:${frame.id}`);
       return;
     }
     const key = frame.type === "stored" || frame.type === "refused" ? `send:${frame.messageId}` : null;
@@ -136,6 +148,19 @@ export async function open(url, handlers = {}) {
     const id = randomUUID();
     const answer = expect(`routing:${id}`, ANSWER_TIMEOUT_MS);
     connection.send(JSON.stringify({ type: "routing-request", to: owner, id, project, request }));
+    return answer;
+  }
+
+  async function publishRecord(record) {
+    const answer = expect(`dir:${record.project}:${record.kind}`, ANSWER_TIMEOUT_MS);
+    connection.send(JSON.stringify({ type: "dir-publish", record }));
+    return answer;
+  }
+
+  async function fetchDirectory(project) {
+    const id = randomUUID();
+    const answer = expect(`fetch:${id}`, ANSWER_TIMEOUT_MS);
+    connection.send(JSON.stringify({ type: "dir-fetch", id, project }));
     return answer;
   }
 

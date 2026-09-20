@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 72 of them
+node --test                      # the tests, 78 of them
 npm publish --access public      # a release, needs a passkey for 2FA
 ```
 
@@ -50,6 +50,8 @@ of the team:
 | `src/outbox.mjs` | The copy of the sender, until a receipt arrives. |
 | `src/limits.mjs` | The rate of a sender, the turns of a session, the queue. |
 | `src/device.mjs` | The keys of one machine, and the delegation of its owner. |
+| `src/dirsync.mjs` | The directory on the relay: three signed records. |
+| `src/settings.mjs` | Where this gateway answers, and which relay it uses. |
 
 Each vendor has its own way in:
 
@@ -69,7 +71,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. Seventy-two tests in `test/` cover the
+4. Test what needs no account. Seventy-eight tests in `test/` cover the
    envelope, the mailbox, the hop limit, both hook shapes, and every part of
    0.2. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
    the spec. Four test files run a second gateway in its own process, as a
@@ -106,8 +108,14 @@ own keys, the owner key signs a record for them, and no private key moves
 between machines. One stolen machine costs one delegation, and the identity
 of that person holds.
 
+The directory travels on the relay, as section 12.1 asks. A new machine takes
+a copy of `keys/identity.json`, which holds the public record of its owner and
+no private key, and it learns the project from the relay. A record never adds
+a member: an owner that this machine does not hold waits with its fingerprint
+until the person accepts it.
+
 Read `docs/spec/openmsg-0.2-draft.md` for the design, and
 `docs/implementations/0.2-plan.md` for the order of the work and for the
-faults that each phase found. Open: the directory does not travel between the
-machines of one owner, so a new machine takes a copy of `keys/identity.json`
-and of `directory.json`. Both files hold public data alone.
+faults that each phase found. Open: one owner holds one connection to the
+relay, so two machines of one owner online at the same time is work that is
+not done.
