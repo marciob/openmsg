@@ -29,6 +29,7 @@ import { deliverLocal } from "./deliver.mjs";
 import * as outbox from "./outbox.mjs";
 import * as relaylink from "./relaylink.mjs";
 import * as limits from "./limits.mjs";
+import * as device from "./device.mjs";
 
 export const PATHS = {
   message: "/openmsg/v2/message",
@@ -69,19 +70,25 @@ export function endpointFor(host, port) {
 
 // --- signatures on a request and on an answer ------------------------------
 
+// A machine with a delegation signs with its own key, and the delegation
+// travels inside the signature. The reader verifies the machine and the
+// owner, and it takes the owner key from its own directory.
 function signObject(body) {
-  const me = identity.load();
+  const signer = device.signer({ project: body.project ?? null });
+  const full = signer.delegation ? { ...body, delegation: signer.delegation } : body;
   return {
-    ...body,
-    signature: { alg: "Ed25519", by: me.ownerId, value: identity.sign(canonicalBytes(body)).toString("base64url") },
+    ...full,
+    signature: {
+      alg: "Ed25519",
+      by: signer.by,
+      device: signer.device,
+      value: signer.sign(canonicalBytes(full)).toString("base64url"),
+    },
   };
 }
 
 function verifyObject(object, member) {
-  const { signature, ...body } = object ?? {};
-  if (signature?.alg !== "Ed25519" || !signature.value) return false;
-  if (signature.by !== member.ownerId) return false;
-  return identity.verifyWith(member, canonicalBytes(body), Buffer.from(signature.value, "base64url"));
+  return device.verifySignedObject(object, member, { project: object?.project ?? null }) === null;
 }
 
 // --- the server ------------------------------------------------------------
@@ -415,7 +422,9 @@ export function checkRoutingAnswer(answer, member, projectId) {
   if (answer.owner !== member.ownerId || answer.project !== projectId) {
     throw new Error("the answer names another owner or another project");
   }
-  directory.setRouting(projectId, member.ownerId, answer.routing);
+  directory.setRouting(projectId, member.ownerId, answer.routing, {
+    sealTo: answer.delegation?.keys?.encryption ?? null,
+  });
   return answer;
 }
 

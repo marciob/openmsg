@@ -13,9 +13,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { canonicalBytes } from "./canonical.mjs";
-import { ownerIdOf, publicKeyOf } from "./identity.mjs";
+import { ownerIdOf } from "./identity.mjs";
+import { verifySignedObject } from "./device.mjs";
 import { accepts, handshake } from "./wsframe.mjs";
-import crypto from "node:crypto";
 
 export const LIMITS = {
   messageBytes: 256 * 1024,
@@ -198,22 +198,16 @@ export async function serve({ port = 0, host = "127.0.0.1", log = () => {} } = {
 // key that gives that owner id is the key of that owner. The relay needs no
 // directory for this step.
 function helloOwner(frame) {
-  const { signature, ...body } = frame;
-  if (!body.keys?.signing?.x || !body.keys?.encryption?.x) return null;
-  if (body.owner !== ownerIdOf(body.keys)) return null;
-  if (Math.abs(Date.now() - Date.parse(body.at ?? 0)) > LIMITS.helloWindowMs) return null;
-  if (signature?.alg !== "Ed25519" || signature.by !== body.owner) return null;
-  try {
-    const ok = crypto.verify(
-      null,
-      canonicalBytes(body),
-      publicKeyOf(body.keys.signing),
-      Buffer.from(signature.value, "base64url"),
-    );
-    return ok ? body.owner : null;
-  } catch {
-    return null;
-  }
+  const keys = frame?.keys;
+  if (!keys?.signing?.x || !keys?.encryption?.x) return null;
+  // The owner id comes from the keys, so these keys are the keys of that
+  // owner, and of nobody else.
+  if (frame.owner !== ownerIdOf(keys)) return null;
+  if (Math.abs(Date.now() - Date.parse(frame.at ?? 0)) > LIMITS.helloWindowMs) return null;
+  // A machine of that owner signs with its own key, and the delegation in
+  // the hello proves that the owner allows it.
+  const why = verifySignedObject(frame, { ownerId: frame.owner, keys });
+  return why === null ? frame.owner : null;
 }
 
 // A connection that ended stays in the map until the socket says so. The

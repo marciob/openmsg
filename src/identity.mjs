@@ -119,12 +119,29 @@ export function publicKeyOf({ alg, x }) {
   return crypto.createPublicKey({ key: { kty: "OKP", crv: alg, x }, format: "jwk" });
 }
 
+// A machine that holds a delegation keeps the public record of its owner and
+// no private key of that owner. These two give a clear answer there.
+function privateKey(file, which) {
+  if (!fs.existsSync(file)) {
+    throw new Error(
+      `this machine holds no ${which} key of the owner. It signs with its own key, ` +
+        "and a command that needs the owner key runs on the machine that made the identity.",
+    );
+  }
+  return crypto.createPrivateKey(fs.readFileSync(file, "utf8"));
+}
+
+export function hasPrivateKeys() {
+  const p = paths();
+  return fs.existsSync(p.signing) && fs.existsSync(p.encryption);
+}
+
 export function signingKey() {
-  return crypto.createPrivateKey(fs.readFileSync(paths().signing, "utf8"));
+  return privateKey(paths().signing, "signing");
 }
 
 export function encryptionKey() {
-  return crypto.createPrivateKey(fs.readFileSync(paths().encryption, "utf8"));
+  return privateKey(paths().encryption, "encryption");
 }
 
 export function sign(bytes) {

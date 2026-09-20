@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 64 of them
+node --test                      # the tests, 72 of them
 npm publish --access public      # a release, needs a passkey for 2FA
 ```
 
@@ -49,6 +49,7 @@ of the team:
 | `src/relaylink.mjs` | The connection of one gateway to the relay. |
 | `src/outbox.mjs` | The copy of the sender, until a receipt arrives. |
 | `src/limits.mjs` | The rate of a sender, the turns of a session, the queue. |
+| `src/device.mjs` | The keys of one machine, and the delegation of its owner. |
 
 Each vendor has its own way in:
 
@@ -68,7 +69,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. Sixty-four tests in `test/` cover the
+4. Test what needs no account. Seventy-two tests in `test/` cover the
    envelope, the mailbox, the hop limit, both hook shapes, and every part of
    0.2. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
    the spec. Four test files run a second gateway in its own process, as a
@@ -100,9 +101,13 @@ again. On the same day, the agent ran `openmsg ack`, and the outbox of the
 sender changed from `adapter-accepted` to `agent-acknowledged`, and then to
 `replied` after the answer.
 
+The delegation of section 3.2 works too: each machine of an owner holds its
+own keys, the owner key signs a record for them, and no private key moves
+between machines. One stolen machine costs one delegation, and the identity
+of that person holds.
+
 Read `docs/spec/openmsg-0.2-draft.md` for the design, and
 `docs/implementations/0.2-plan.md` for the order of the work and for the
-faults that each phase found. One part of the spec still has no code: the
-delegation of section 3.2, which lets a session sign in the name of its
-owner. Today the owner key signs, so a receiver verifies the person and not
-the device.
+faults that each phase found. Open: the directory does not travel between the
+machines of one owner, so a new machine takes a copy of `keys/identity.json`
+and of `directory.json`. Both files hold public data alone.

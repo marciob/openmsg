@@ -95,17 +95,41 @@ export function setEndpoint(projectId, ownerId, endpoint) {
 // The last routing data that this owner read from that member. A gateway that
 // is offline cannot answer, and the epoch in the cache still stops a message
 // that would land in a session that took the name later.
-export function setRouting(projectId, ownerId, rows) {
+export function setRouting(projectId, ownerId, rows, { sealTo = null } = {}) {
   const data = read();
   const record = data.projects[projectId]?.members?.[ownerId];
   if (!record) return null;
-  record.routing = { at: now(), rows };
+  // `sealTo` is the encryption key of the machine that answered. A message
+  // that goes to that machine is sealed for it, and not for the owner key.
+  record.routing = { at: now(), rows, sealTo };
   save(data);
   return record.routing;
 }
 
 export function routingOf(projectId, ownerId) {
   return project(projectId)?.members?.[ownerId]?.routing ?? null;
+}
+
+// A machine of a member, and not the member. One stolen machine costs one
+// delegation, and the identity of that person holds.
+export function revokeDevice(projectId, deviceId, reason = null) {
+  const data = read();
+  const entry = data.projects[projectId];
+  if (!entry) throw new Error(`no project ${projectId} in the directory`);
+  entry.revokedDevices = entry.revokedDevices ?? [];
+  if (entry.revokedDevices.some((r) => r.device === deviceId)) return entry.revokedDevices.find((r) => r.device === deviceId);
+  const record = { device: deviceId, at: now(), reason };
+  entry.revokedDevices.push(record);
+  save(data);
+  return record;
+}
+
+export function isDeviceRevoked(projectId, deviceId) {
+  return Boolean(project(projectId)?.revokedDevices?.some((r) => r.device === deviceId));
+}
+
+export function revokedDevices(projectId) {
+  return project(projectId)?.revokedDevices ?? [];
 }
 
 export function isRevoked(projectId, ownerId) {

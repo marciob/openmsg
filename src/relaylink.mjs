@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { canonicalBytes } from "./canonical.mjs";
 import * as identity from "./identity.mjs";
+import * as device from "./device.mjs";
 import { connect } from "./wsframe.mjs";
 
 export const HELLO_TIMEOUT_MS = 10_000;
@@ -13,7 +14,11 @@ export const ANSWER_TIMEOUT_MS = 20_000;
 // The hello proves the key of this owner. The relay needs no directory,
 // because the owner id comes from the two public keys.
 function hello() {
-  const me = identity.load();
+  const signer = device.signer();
+  const me = signer.owner;
+  // `keys` are the public keys of the owner. The relay reads the owner id
+  // from them, and it verifies a delegation against them. It needs no
+  // directory, and it learns nothing that is not public.
   const body = {
     type: "hello",
     version: 2,
@@ -21,10 +26,16 @@ function hello() {
     keys: me.keys,
     at: new Date().toISOString(),
     nonce: randomUUID(),
+    ...(signer.delegation ? { delegation: signer.delegation } : {}),
   };
   return {
     ...body,
-    signature: { alg: "Ed25519", by: me.ownerId, value: identity.sign(canonicalBytes(body)).toString("base64url") },
+    signature: {
+      alg: "Ed25519",
+      by: me.ownerId,
+      device: signer.device,
+      value: signer.sign(canonicalBytes(body)).toString("base64url"),
+    },
   };
 }
 
