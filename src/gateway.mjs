@@ -28,8 +28,13 @@ import { agentsOfVendor } from "./registry.mjs";
 import { deliverLocal } from "./deliver.mjs";
 import * as outbox from "./outbox.mjs";
 import * as relaylink from "./relaylink.mjs";
+import * as limits from "./limits.mjs";
 
-export const PATHS = { message: "/openmsg/v2/message", routing: "/openmsg/v2/routing" };
+export const PATHS = {
+  message: "/openmsg/v2/message",
+  routing: "/openmsg/v2/routing",
+  receipt: "/openmsg/v2/receipt",
+};
 export const MAX_BODY = 256 * 1024;
 // A signed request that is older than this window is refused, so a request
 // that somebody records cannot work again later.
@@ -148,7 +153,7 @@ async function handleRouting(request) {
 
 // The whole path of an inbound message: open it, apply the permission, and
 // give it to the adapter. Every step writes the state to the durable store.
-export async function receive(wire, { deliver = deliverLocal, now = Date.now(), log = () => {} } = {}) {
+export async function receive(wire, { deliver = deliverLocal, now = Date.now(), log = () => {}, via = "http" } = {}) {
   let opened;
   try {
     opened = remote.open(wire, { now });
@@ -174,22 +179,50 @@ export async function receive(wire, { deliver = deliverLocal, now = Date.now(), 
     from: { owner: verified.owner, label: verified.label, fingerprint: verified.fingerprint, alias: message.openmsg.hops.at(-1) },
     target: { session: message.openmsg.target.session, epoch: message.openmsg.target.epoch },
     expiresAt: message.openmsg.expiresAt,
+    digest: remote.digestOf(message),
+    via,
     message,
     verified,
   };
 
-  // A retry carries the same message id. A message that already reached the
-  // agent, or that already waits for the owner, does not arrive a second
-  // time. A message that a rule stopped can arrive again, because the reason
-  // can pass: a session that ran again, for one.
   const before = inbound.find(message.messageId);
-  const settled = ["adapter-accepted", "agent-acknowledged", "replied", "held", "queued"];
-  if (before && before.from?.owner === verified.owner && settled.includes(before.status)) {
-    // The store keeps the state that the first copy reached, and it records
-    // that a second copy arrived.
-    inbound.put({ ...before, status: before.status, reason: "duplicate" });
-    log(`duplicate ${message.messageId} from ${verified.owner}: it is already "${before.status}"`);
-    return { status: before.status, reason: "duplicate", messageId: message.messageId };
+  if (before && before.from?.owner === verified.owner) {
+    // Two messages with one id and one sender, and different content. The
+    // receiver keeps the first record, and it refuses the new arrival. A
+    // receiver never rewrites the history of a delivery that happened.
+    if (before.digest && before.digest !== record.digest) {
+      inbound.put({ ...before, status: before.status, reason: "conflict", conflictAt: new Date(now).toISOString() });
+      log(`conflict ${message.messageId} from ${verified.owner}: another content under one id`);
+      return { status: "refused", reason: "conflict", messageId: message.messageId };
+    }
+    // A retry carries the same message id and the same content. A message that
+    // already reached the agent, or that already waits for the owner, does not
+    // arrive a second time. A message that a rule stopped can arrive again,
+    // because the reason can pass: a session that ran again, for one.
+    const settled = ["adapter-accepted", "agent-acknowledged", "replied", "held", "queued"];
+    if (settled.includes(before.status)) {
+      inbound.put({ ...before, status: before.status, reason: "duplicate" });
+      log(`duplicate ${message.messageId} from ${verified.owner}: it is already "${before.status}"`);
+      return { status: before.status, reason: "duplicate", messageId: message.messageId };
+    }
+  }
+
+  // The limits of the receiver, and not of the sender.
+  const stopped = limits.check(inbound.list(), {
+    owner: verified.owner,
+    project: verified.project,
+    session: record.target.session,
+    now,
+  });
+  if (stopped?.action === "refuse") {
+    inbound.put({ ...record, status: "refused", reason: stopped.reason, detail: stopped.detail });
+    log(`refused ${message.messageId}: ${stopped.detail}`);
+    return { status: "refused", reason: stopped.reason, detail: stopped.detail, messageId: message.messageId };
+  }
+  if (stopped?.action === "hold") {
+    inbound.put({ ...record, status: "held", reason: stopped.reason, detail: stopped.detail });
+    log(`held ${message.messageId}: ${stopped.detail}`);
+    return { status: "held", reason: stopped.reason, detail: stopped.detail, messageId: message.messageId };
   }
 
   const standing = permissions.of(verified.project, verified.owner);
@@ -288,7 +321,12 @@ export function serve({ port = 0, host = "127.0.0.1", deliver = deliverLocal, lo
         send(answer.code, answer.body);
         return;
       }
-      const out = await receive(body, { deliver, log });
+      if (req.url === PATHS.receipt) {
+        const answer = handleReceipt(body);
+        send(answer.code, answer.body);
+        return;
+      }
+      const out = await receive(body, { deliver, log, via: "http" });
       send(out.status === "refused" ? 403 : 200, out);
     } catch (e) {
       send(500, { error: e.message });
@@ -305,6 +343,49 @@ export function serve({ port = 0, host = "127.0.0.1", deliver = deliverLocal, lo
       });
     });
   });
+}
+
+// A receipt says which state a message reached at the receiver. It carries a
+// signature, so a sender knows that the owner of that key wrote it.
+function handleReceipt(body) {
+  const project = body?.project;
+  const member = project ? directory.member(project, body?.owner) : null;
+  if (!member) return { code: 403, body: { error: "you are not a member of this project here" } };
+  if (!verifyObject(body, member)) return { code: 403, body: { error: "the signature does not match" } };
+  if (!inbound.STATES.includes(body.status)) return { code: 400, body: { error: `unknown state "${body.status}"` } };
+  const row = outbox.find(body.messageId);
+  if (!row) return { code: 404, body: { error: "no such message in the outbox" } };
+  if (row.to !== member.ownerId) return { code: 403, body: { error: "that message went to another owner" } };
+  outbox.setState(body.messageId, body.status, { reason: body.reason ?? null });
+  return { code: 200, body: { ok: true } };
+}
+
+// The receiver tells the sender which state the message reached. It uses the
+// relay when the message came that way, and the direct address otherwise.
+export async function reportState(record, status, { reason = null } = {}) {
+  const member = directory.member(record.project, record.from.owner);
+  if (!member) return { sent: false, why: "that sender is not a member any more" };
+  const body = signObject({
+    kind: "receipt",
+    version: 2,
+    owner: identity.load().ownerId,
+    project: record.project,
+    messageId: record.messageId,
+    status,
+    reason,
+    at: new Date().toISOString(),
+  });
+  if (record.via === "relay") {
+    const url = settings().relay;
+    if (!url) return { sent: false, why: "this owner has no relay" };
+    const link = await relaylink.open(url);
+    link.ack(record.messageId, record.from.owner, status, reason);
+    link.close();
+    return { sent: true, how: "relay" };
+  }
+  if (!member.endpoint) return { sent: false, why: `no address for ${member.label}` };
+  await postJson(`${member.endpoint}${PATHS.receipt}`, body, { timeoutMs: 10_000 });
+  return { sent: true, how: "http" };
 }
 
 // --- the client side -------------------------------------------------------
@@ -358,7 +439,7 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } 
     onClose: () => log(`relay ${url}: the connection closed`),
     onError: (e) => log(`relay ${url}: ${e.error}`),
     onDeliver: async ({ wire, from }) => {
-      const out = await receive(wire, { deliver, log });
+      const out = await receive(wire, { deliver, log, via: "relay" });
       // The acknowledgement tells the relay to forget the message, and it
       // tells the sender what happened here.
       holder?.link?.ack(wire.messageId, from, out.status, out.reason ?? null);

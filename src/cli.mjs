@@ -18,6 +18,7 @@ import { deliverLocal } from "./deliver.mjs";
 import * as relay from "./relay.mjs";
 import * as relaylink from "./relaylink.mjs";
 import * as outbox from "./outbox.mjs";
+import * as limits from "./limits.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -51,7 +52,10 @@ For the agents of another person (version 0.2, in progress):
   openmsg unpublish <alias>         take a session back
   openmsg permit <owner> <accept|hold|refuse>
   openmsg held [<id>] [--text]      the messages that wait for you
+  openmsg held --all                every message from another person, and its state
   openmsg accept <id> [--always]    give a held message to the agent
+  openmsg ack <id>                  say that you read a message
+  openmsg limits                    the limits that this machine holds
   openmsg relay start [--port <n>]  run the relay of a team
   openmsg relay use <url>           send through that relay
   openmsg outbox [--all]            the messages that wait for a receipt
@@ -294,6 +298,14 @@ async function cmdSendRemote(target, text, replyTo, args) {
   }
   console.log(`${how[out.status] ?? `${out.status}${out.reason ? `: ${out.reason}` : ""}`} (${message.messageId})`);
   if (out.status === "refused") process.exitCode = 1;
+
+  // An answer is the proof that the agent read the message. No hook and no
+  // transport gives that proof.
+  if (answered && out.status !== "refused") {
+    inbound.setStatus(answered.messageId, "replied");
+    const told = await gateway.reportState(answered, "replied").catch((e) => ({ sent: false, why: e.message }));
+    if (!told.sent) console.error(`openmsg: ${answered.from.label} does not know yet: ${told.why}`);
+  }
 }
 
 function waitForReceipt(receipts, messageId, ms) {
@@ -412,6 +424,15 @@ function cmdPermit(args) {
 
 function cmdHeld(args) {
   const [id] = positional(args);
+  if (args.includes("--all") && !id) {
+    const all = inbound.list().sort((a, b) => (a.at < b.at ? -1 : 1));
+    if (all.length === 0) console.log("no message from another person");
+    for (const r of all) {
+      const why = r.reason ? ` · ${r.reason}` : "";
+      console.log(`${r.messageId.slice(0, 8)}  ${String(r.status).padEnd(18)} from ${r.from?.label ?? "unknown"}${why}  ${r.at}`);
+    }
+    return;
+  }
   const rows = inbound.list({ status: "held" });
   if (id) {
     const row = inbound.findByPrefix(id);
@@ -439,6 +460,32 @@ function cmdHeld(args) {
     console.log(`${r.messageId.slice(0, 8)}  from ${r.from.label} (${r.from.owner}) · ${r.project} · ${r.at}`);
   }
   console.log(`Read one: openmsg held <id> --text. Give one to the agent: openmsg accept <id>.`);
+}
+
+// The agent says that it read the message. Only this event gives the state
+// "agent-acknowledged". A write to a socket never proves that a model read.
+async function cmdAck(args) {
+  const [id] = positional(args);
+  const row = inbound.findByPrefix(id ?? "");
+  if (!row) throw new Error(`no message ${id}. Run: openmsg held --all`);
+  if (!["adapter-accepted", "agent-acknowledged", "replied"].includes(row.status)) {
+    throw new Error(`message ${id} is "${row.status}", and an acknowledgement belongs to a message that reached the agent`);
+  }
+  if (row.status === "adapter-accepted") inbound.setStatus(row.messageId, "agent-acknowledged");
+  const told = await gateway.reportState(row, "agent-acknowledged").catch((e) => ({ sent: false, why: e.message }));
+  console.log(
+    `acknowledged ${row.messageId}` +
+      (told.sent ? `, and ${row.from.label} knows over ${told.how}` : `. ${row.from.label} does not know yet: ${told.why}`),
+  );
+}
+
+function cmdLimits() {
+  const values = limits.values();
+  const rows = inbound.list();
+  console.log(`${values.senderPerWindow} messages from one sender in ${Math.round(values.senderWindowMs / 60_000)} minutes`);
+  console.log(`${values.turnsPerSession} turns from remote messages in one session in ${Math.round(values.turnWindowMs / 60_000)} minutes`);
+  console.log(`${values.heldMax} messages that wait for the owner (${rows.filter((r) => r.status === "held").length} now)`);
+  console.log(`Change a value in ${identity.home()}/limits.json`);
 }
 
 async function cmdAccept(args) {
@@ -646,6 +693,8 @@ try {
   else if (cmd === "permit") cmdPermit(args);
   else if (cmd === "held") cmdHeld(args);
   else if (cmd === "accept") await cmdAccept(args);
+  else if (cmd === "ack") await cmdAck(args);
+  else if (cmd === "limits") cmdLimits();
   else if (cmd === "id") cmdId(args);
   else if (cmd === "invite") cmdInvite(args);
   else if (cmd === "dir") cmdDir(args);

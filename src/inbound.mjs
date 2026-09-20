@@ -7,14 +7,35 @@ import fs from "node:fs";
 import path from "node:path";
 import { home } from "./identity.mjs";
 
+// The seven states of section 8 of the spec. A message holds one of them.
+//
+// `adapter-accepted` says that the adapter of the vendor took the message.
+// Whether the model read it is another question, and `agent-acknowledged`
+// answers that one. Only an event from the agent gives that state.
+export const STATES = [
+  "queued",
+  "held",
+  "adapter-accepted",
+  "agent-acknowledged",
+  "replied",
+  "refused",
+  "expired",
+];
+
 function file() {
   return path.join(home(), "inbound.jsonl");
 }
 
 export function put(record) {
+  if (record.status && !STATES.includes(record.status)) {
+    throw new Error(`"${record.status}" is not a state of a message. The states are: ${STATES.join(", ")}`);
+  }
   const target = file();
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  const row = { ...record, at: record.at ?? new Date().toISOString() };
+  const now = new Date().toISOString();
+  // `receivedAt` is the arrival, and `at` is the last change of the state. A
+  // rate limit counts arrivals, so the two are not the same field.
+  const row = { ...record, receivedAt: record.receivedAt ?? now, at: now };
   fs.appendFileSync(target, JSON.stringify(row) + "\n");
   return row;
 }
