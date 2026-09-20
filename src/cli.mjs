@@ -41,12 +41,32 @@ async function cmdList() {
 
 async function cmdSend(target, text, replyTo = null) {
   if (!target || !text) throw new Error('usage: openmsg send <agent> "<text>" [--reply-to <message-id>]');
-  const to = await findAgent(target);
   const from = await self();
   // A reply keeps the conversation of the message that it answers, and it adds
   // this agent to the chain of hops.
   const answered = replyTo ? mailbox.find(from, replyTo) : null;
   if (replyTo && !answered) throw new Error(`no message ${replyTo} in the mailbox of ${address(from)}`);
+
+  // A name can move to another session. A reply therefore goes to the session
+  // id of the message that it answers, and never to a session that took the
+  // name later.
+  const pinned = answered?.openmsg?.from?.id ?? null;
+  let to;
+  try {
+    to = await findAgent(pinned ?? target);
+  } catch (e) {
+    if (!pinned) throw e;
+    throw new Error(
+      `the session that sent ${replyTo} is gone, so the reply has no target. ` +
+        `Its name was ${address(answered.openmsg.from)}. Send a new message instead of a reply.`,
+    );
+  }
+  if (pinned && to.id !== pinned) {
+    throw new Error(
+      `the session that sent ${replyTo} is gone. Its name now belongs to ${address(to)}. ` +
+        "Send a new message instead of a reply.",
+    );
+  }
   const message = createMessage({
     from,
     to,
