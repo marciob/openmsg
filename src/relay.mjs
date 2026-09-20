@@ -9,6 +9,7 @@
 // size, on the number, and on the age. The sender keeps its own copy until a
 // receipt arrives, so one loss on one side does not lose the message.
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -178,11 +179,37 @@ function ownersIn(project) {
 
 // --- the server ------------------------------------------------------------
 
-export async function serve({ port = 0, host = "127.0.0.1", log = () => {} } = {}) {
-  const server = http.createServer((req, res) => {
+export const LOOPBACK = ["127.0.0.1", "localhost", "::1", "[::1]"];
+
+export function isLoopback(host) {
+  return LOOPBACK.includes(String(host));
+}
+
+// A relay that other machines reach speaks TLS. Section 4.2 of the spec asks
+// for it, and a gateway sends its hello and the addresses of its messages
+// over that connection. The body of a message is sealed, and the addresses
+// are not.
+//
+// `cert` and `key` give TLS here. A relay behind a proxy that ends TLS takes
+// `insecure`, and the operator types that word.
+export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = null, insecure = false, log = () => {} } = {}) {
+  const answer = (req, res) => {
     res.writeHead(426, { "content-type": "text/plain" });
     res.end("openmsg relay: this address takes a WebSocket connection\n");
-  });
+  };
+  const secure = Boolean(cert && key);
+  if (!secure && !isLoopback(host) && !insecure) {
+    throw new Error(
+      `a relay on ${host} carries the messages of other people, and this one has no TLS. ` +
+        "Give --cert <file> and --key <file>, or put a proxy that ends TLS in front and add --insecure.",
+    );
+  }
+  const server = secure
+    ? https.createServer({ cert: fs.readFileSync(cert), key: fs.readFileSync(key) }, answer)
+    : http.createServer(answer);
+  if (!secure && !isLoopback(host)) {
+    log("WARNING: this relay speaks no TLS. A proxy in front must end TLS, or the addresses travel in the open.");
+  }
   // One owner, one connection. A second connection of one owner replaces the
   // first, because a gateway that reconnects must not leave a dead reader.
   const owners = new Map();
@@ -256,7 +283,7 @@ export async function serve({ port = 0, host = "127.0.0.1", log = () => {} } = {
   return {
     server,
     port: real,
-    url: `ws://${host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host}:${real}`,
+    url: `${secure ? "wss" : "ws"}://${host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host}:${real}`,
     owners,
     close: () => new Promise((done) => server.close(done)),
   };

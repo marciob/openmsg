@@ -69,8 +69,8 @@ For the agents of another person (version 0.2, in progress):
   openmsg dir pending               the owners that wait for you to accept them
   openmsg dir accept <owner> --fingerprint "<value>"
   openmsg device revoke <id>        tell the team that a machine of yours is gone
-  openmsg relay start [--port <n>]  run the relay of a team
-  openmsg relay use <url>           send through that relay
+  openmsg relay start [--port <n>] [--cert <file>] [--key <file>]
+  openmsg relay use <url> [--ca <file>]   send through that relay
   openmsg outbox [--all]            the messages that wait for a receipt
 
 A message to another person goes to "claude:api-worker@alice".
@@ -435,7 +435,14 @@ async function cmdRelay(args) {
   if (sub === "start") {
     const host = flag(rest, "host") ?? "127.0.0.1";
     const port = Number(flag(rest, "port") ?? 7800);
-    const running = await relay.serve({ port, host, log: (line) => console.log(`${new Date().toISOString()} ${line}`) });
+    const running = await relay.serve({
+      port,
+      host,
+      cert: flag(rest, "cert"),
+      key: flag(rest, "key"),
+      insecure: rest.includes("--insecure"),
+      log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    });
     console.log(`relay listens on ${running.url}, store in ${relay.home()}`);
     console.log("It carries sealed bytes. It cannot read a message.");
     console.log("It learns who writes to whom, when, and in which project.");
@@ -445,10 +452,20 @@ async function cmdRelay(args) {
     return;
   }
   if (sub === "use") {
-    const [url] = positional(rest);
-    if (!url) throw new Error("usage: openmsg relay use <url>");
-    gateway.saveSettings({ relay: url });
+    const [url] = positional(rest, ["ca"]);
+    if (!url) throw new Error("usage: openmsg relay use <url> [--ca <file>] [--insecure]");
+    const ca = flag(rest, "ca");
+    const insecure = rest.includes("--insecure");
+    gateway.saveSettings({ relay: url, relayCa: ca ?? null, relayInsecure: insecure });
     console.log(`this owner sends through ${url}`);
+    if (ca) console.log(`and it trusts the certificate in ${ca}`);
+    if (new URL(url).protocol === "ws:" && !relay.isLoopback(new URL(url).hostname)) {
+      console.log(
+        insecure
+          ? "WARNING: no TLS. The messages stay sealed, and the addresses travel in the open."
+          : "That address has no TLS. Add --insecure if you accept that, or use a wss:// address.",
+      );
+    }
     return;
   }
   if (sub === undefined || sub === "show") {
@@ -456,7 +473,7 @@ async function cmdRelay(args) {
     console.log(url ? `relay ${url}` : "no relay. Run: openmsg relay use <url>");
     return;
   }
-  throw new Error("usage: openmsg relay start | relay use <url> | relay show");
+  throw new Error("usage: openmsg relay start [--cert <f> --key <f>] | relay use <url> [--ca <f>] | relay show");
 }
 
 function cmdOutbox(args) {

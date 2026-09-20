@@ -7,6 +7,9 @@ import { canonicalBytes } from "./canonical.mjs";
 import * as identity from "./identity.mjs";
 import * as device from "./device.mjs";
 import { connect } from "./wsframe.mjs";
+import { settings } from "./settings.mjs";
+import { isLoopback } from "./relay.mjs";
+import fs from "node:fs";
 
 export const HELLO_TIMEOUT_MS = 10_000;
 export const ANSWER_TIMEOUT_MS = 20_000;
@@ -39,8 +42,24 @@ function hello() {
   };
 }
 
+// A relay on another machine gets a connection with TLS. Without it, the
+// hello of this owner and the addresses of every message travel in the open,
+// and rule 4.2 of the spec asks for TLS.
+function tlsFor(url) {
+  const address = new URL(url);
+  if (address.protocol === "wss:") {
+    const ca = settings().relayCa;
+    return ca ? { ca: fs.readFileSync(ca) } : {};
+  }
+  if (isLoopback(address.hostname) || settings().relayInsecure) return {};
+  throw new Error(
+    `${url} has no TLS, and it is not on this machine. Use a wss:// address, ` +
+      "or say that you accept it: openmsg relay use <url> --insecure",
+  );
+}
+
 export async function open(url, handlers = {}) {
-  const connection = await connect(url);
+  const connection = await connect(url, { tls: tlsFor(url) });
   const waiting = new Map();
   const link = {
     url,
