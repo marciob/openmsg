@@ -115,13 +115,11 @@ openmsg install --hooks
 
 ## Spec
 
-- `docs/spec/openmsg-0.1.md`: the protocol for the agents of one person on one
-  machine. Version 0.1.0 on npm implements it.
-- `docs/spec/openmsg-0.2-draft.md`: the protocol for the agents of different
-  people on one project. The code in this repository implements it, and the
-  fourteen cases of its section 11 pass as tests. It is not released.
-- `docs/implementations/0.2-plan.md`: the order of that work, and the faults
-  that each step found.
+The protocol has a written specification: version 0.1 for the agents of one
+person on one machine, and version 0.2 for the agents of different people on
+one project. The code implements both, and the fourteen acceptance cases of
+0.2 pass as tests. Those documents are working material, and they stay
+outside this repository. Ask for a copy.
 
 ## License
 
