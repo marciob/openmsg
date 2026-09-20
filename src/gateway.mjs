@@ -401,10 +401,11 @@ export function checkRoutingAnswer(answer, member, projectId) {
   if (answer.owner !== member.ownerId || answer.project !== projectId) {
     throw new Error("the answer names another owner or another project");
   }
-  directory.setRouting(projectId, member.ownerId, answer.routing, {
-    sealTo: answer.delegation?.keys?.encryption ?? null,
-  });
-  return answer;
+  // Each row takes the encryption key of the machine that answered, because
+  // a message for a session goes to the machine that holds that session,
+  // and the machines of one owner hold different keys.
+  const sealTo = answer.delegation?.keys?.encryption ?? null;
+  return { ...answer, routing: (answer.routing ?? []).map((row) => ({ ...row, sealTo })) };
 }
 
 export async function routingOf(member, projectId, { timeoutMs = 20_000 } = {}) {
@@ -412,16 +413,40 @@ export async function routingOf(member, projectId, { timeoutMs = 20_000 } = {}) 
     throw new Error(`no endpoint for ${member.ownerId}. Run: openmsg dir endpoint ${member.ownerId} <url>`);
   }
   const answer = await postJson(`${member.endpoint}${PATHS.routing}`, routingRequest(projectId), { timeoutMs });
-  return checkRoutingAnswer(answer, member, projectId);
+  const checked = checkRoutingAnswer(answer, member, projectId);
+  directory.setRouting(projectId, member.ownerId, checked.routing);
+  return checked;
 }
 
-// The same question, over the relay. The gateway of the other person answers
-// only when it is online.
+// The same question, over the relay. Every machine of that person that is
+// online answers, and the sessions of all of them go into one list.
 export async function routingOverRelay(link, member, projectId) {
-  const answer = await link.routing(member.ownerId, projectId, routingRequest(projectId));
-  if (answer.error) throw new Error(`${member.label ?? member.ownerId}: ${answer.error}`);
-  if (answer.code && answer.code !== 200) throw new Error(`${member.ownerId} refused: ${answer.body?.error}`);
-  return checkRoutingAnswer(answer.body ?? answer, member, projectId);
+  const answers = await link.routing(member.ownerId, projectId, routingRequest(projectId));
+  const rows = [];
+  const faults = [];
+  let first = null;
+  for (const answer of answers) {
+    if (answer.error) {
+      faults.push(answer.error);
+      continue;
+    }
+    if (answer.code && answer.code !== 200) {
+      faults.push(answer.body?.error ?? `code ${answer.code}`);
+      continue;
+    }
+    try {
+      const checked = checkRoutingAnswer(answer.body ?? answer, member, projectId);
+      first = first ?? checked;
+      rows.push(...checked.routing);
+    } catch (e) {
+      faults.push(e.message);
+    }
+  }
+  if (!first) {
+    throw new Error(`${member.label ?? member.ownerId}: ${faults[0] ?? "no machine of that person answered"}`);
+  }
+  directory.setRouting(projectId, member.ownerId, rows);
+  return { ...first, routing: rows };
 }
 
 // The directory of section 12.1: this owner publishes its own records, and it
@@ -449,6 +474,7 @@ export async function syncDirectory(link, { log = () => {}, projects = [] } = {}
     for (const row of applied.added) log(`the directory gave ${row.label} (${row.owner}) in ${entry.id}`);
     for (const row of applied.updated) log(`${row.owner} answers at ${row.endpoint} now`);
     for (const row of applied.revoked) log(`${row.owner} revoked the machine ${row.device}`);
+    for (const row of applied.permissions ?? []) log(`${row.owner} is "${row.value}" here, as you said on another machine`);
     for (const row of applied.pending) log(`${row.label} (${row.ownerId}) waits for you. Run: openmsg dir pending`);
     out.push({ project: entry.id, ...applied });
   }
@@ -475,7 +501,11 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } 
       // A session that this machine does not hold is not an answer for the
       // whole owner. Another machine of this owner can hold it, so the
       // message stays at the relay, and no acknowledgement leaves here.
-      if (["not-published", "session-gone"].includes(out.reason)) {
+      //
+      // A message that this machine cannot open belongs to the same group: a
+      // message for another machine of this owner is sealed for the key of
+      // that machine, and this one cannot read it.
+      if (["not-published", "session-gone", "unseal-failed"].includes(out.reason)) {
         log(`${wire.messageId} stays at the relay: ${out.reason}`);
         return;
       }

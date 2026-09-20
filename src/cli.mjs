@@ -234,7 +234,6 @@ async function cmdSendRemote(target, text, replyTo, args) {
   const link = direct ? null : await relaylink.open(relayUrl, { onReceipt: (frame) => receipts.push(frame) });
 
   let rows;
-  let sealTo = null;
   let label = member.label;
   try {
     const answer = direct
@@ -242,10 +241,6 @@ async function cmdSendRemote(target, text, replyTo, args) {
       : await gateway.routingOverRelay(link, member, project);
     rows = answer.routing;
     label = answer.label ?? label;
-    // The gateway of the other person answered from one machine. A message
-    // for that machine is sealed for its key, and the owner key opens
-    // nothing that this machine holds.
-    sealTo = answer.delegation?.keys?.encryption ?? null;
   } catch (e) {
     // The gateway of the other person is offline. The routing data that this
     // machine read before still names the session and the epoch, and a
@@ -258,7 +253,6 @@ async function cmdSendRemote(target, text, replyTo, args) {
     console.error(`openmsg: ${e.message}`);
     console.error(`openmsg: using the routing data of ${cached.at}`);
     rows = cached.rows;
-    sealTo = cached.sealTo ?? null;
   }
 
   const row = rows.find((r) => r.alias === alias || r.name === alias || r.session === alias);
@@ -268,6 +262,9 @@ async function cmdSendRemote(target, text, replyTo, args) {
     throw new Error(`${member.label} does not publish "${alias}" in this project. Published: ${names}`);
   }
   if (row.live === false) console.error(`openmsg: the session ${row.alias}@${label} does not run now`);
+  // The message is sealed for the machine that holds that session, and the
+  // routing data of that machine gave this key.
+  const sealTo = row.sealTo ?? null;
 
   const mine = await self();
   const message = remote.createRemote({

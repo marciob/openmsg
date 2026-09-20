@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 82 of them
+node --test                      # the tests, 86 of them
 npm publish --access public      # a release, needs a passkey for 2FA
 ```
 
@@ -72,7 +72,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. Eighty-two tests in `test/` cover the
+4. Test what needs no account. Eighty-six tests in `test/` cover the
    envelope, the mailbox, the hop limit, both hook shapes, and every part of
    0.2. Two tests need `openssl` for a certificate, and they say so when it
    is not there. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
@@ -120,8 +120,12 @@ The relay speaks TLS with `--cert` and `--key`, and it refuses to listen on
 another address without them. A gateway refuses a plain `ws://` relay that is
 not on its own machine.
 
+An owner runs several machines at the same time. The relay gives a message
+to every machine of that owner, and the machine that holds the session takes
+it. A message is sealed for the machine that holds the session, so no other
+machine can read it. A standing permission travels between the machines of
+one owner.
+
 Read `docs/spec/openmsg-0.2-draft.md` for the design, and
 `docs/implementations/0.2-plan.md` for the order of the work and for the
-faults that each phase found. Open before a release of 0.2: one owner holds
-one connection to the relay, so two machines of one owner online at the same
-time is work that is not done.
+faults that each phase found.

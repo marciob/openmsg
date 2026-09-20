@@ -135,11 +135,24 @@ Rules:
 12. The body of a message is sealed, and the addresses on the outside are
     not. TLS covers the hello of a gateway, the two owner ids, the project
     id, and the times.
-13. One owner holds one connection to the relay. A second machine of that
-    owner takes the place of the first, and the first hears why. Two machines
-    of one owner, online at the same time, is open work. A machine that does
-    not hold the session of a message sends no acknowledgement, so the
-    message stays at the relay for a machine that holds it.
+13. An owner holds one connection for each machine, up to a bound. The relay
+    cannot read a message, so it does not know which machine holds the
+    session that a message names. It gives the message to every machine of
+    that owner.
+14. A machine sends no acknowledgement for a message that it cannot place:
+    the session is not published here, the session does not run here, or the
+    seal does not open with the keys of this machine. The message then stays
+    at the relay for a machine that can take it. A machine that takes a
+    message acknowledges it, and the relay forgets it.
+15. A question about routing goes to every machine of that owner, and each
+    one answers for the sessions that it publishes. The sender verifies each
+    answer on its own and joins the lists. Each row carries the encryption
+    key of the machine that answered, and a message for a session is sealed
+    for that machine.
+16. A receipt goes to every machine of the owner that sent, because the relay
+    does not know which machine sent. A receipt for an owner that is offline
+    waits until it is old, and every machine that connects reads it. A
+    machine that reads one twice writes the same state twice.
 
 ## 5. Authentication of a message
 
@@ -402,7 +415,7 @@ A Codex review gave these answers. They are the plan of record.
    | Record | It says | Who applies it |
    |---|---|---|
    | `self` | "this is my public record, and my gateway answers here" | Every member, for an owner that it already holds. |
-   | `roster` | "these are the members that I accepted in this project" | The other machines of that same owner. |
+   | `roster` | "these are the members that I accepted in this project, and what I let each one do" | The other machines of that same owner. |
    | `revoke-device` | "this machine of mine is gone" | Every member, because only an owner names the machines of that owner. |
 
    A record carries the public keys of its owner, and the owner id comes from
@@ -415,6 +428,11 @@ A Codex review gave these answers. They are the plan of record.
    waits in a list, with its fingerprint, until the person accepts it. Rule
    3.3 holds: a person joins through an invitation, and the two sides compare
    a fingerprint.
+
+   A standing permission of section 6 travels in the `roster`. The owner
+   decides `accept`, `hold`, or `refuse` one time, on one machine, and every
+   machine of that owner holds the same answer. A permission belongs to the
+   person, and not to a machine.
 
    A `roster` is the answer to one machine of an owner that knows nothing. It
    carries the members that the person already accepted, with the fingerprints

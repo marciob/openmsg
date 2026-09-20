@@ -60,7 +60,17 @@ function tlsFor(url) {
 
 export async function open(url, handlers = {}) {
   const connection = await connect(url, { tls: tlsFor(url) });
+  // key -> { resolve, keep }. A question with one answer removes its waiter
+  // when the answer arrives. A question that every machine of an owner
+  // answers keeps its waiter until the window closes.
   const waiting = new Map();
+  const fire = (key, frame) => {
+    const held = waiting.get(key);
+    if (!held) return false;
+    held.resolve(frame);
+    if (!held.keep) waiting.delete(key);
+    return true;
+  };
   const link = {
     url,
     connection,
@@ -84,27 +94,12 @@ export async function open(url, handlers = {}) {
     } catch {
       return;
     }
-    if ((frame.type === "dir-stored" || frame.type === "dir-refused") && waiting.has(`dir:${frame.project}:${frame.kind}`)) {
-      waiting.get(`dir:${frame.project}:${frame.kind}`)(frame);
-      waiting.delete(`dir:${frame.project}:${frame.kind}`);
-      return;
+    if (frame.type === "dir-stored" || frame.type === "dir-refused") {
+      if (fire(`dir:${frame.project}:${frame.kind}`, frame)) return;
     }
-    if (frame.type === "dir-records" && waiting.has(`fetch:${frame.id}`)) {
-      waiting.get(`fetch:${frame.id}`)(frame);
-      waiting.delete(`fetch:${frame.id}`);
-      return;
-    }
-    const key = frame.type === "stored" || frame.type === "refused" ? `send:${frame.messageId}` : null;
-    if (key && waiting.has(key)) {
-      waiting.get(key)(frame);
-      waiting.delete(key);
-      return;
-    }
-    if (frame.type === "routing-answer" && waiting.has(`routing:${frame.id}`)) {
-      waiting.get(`routing:${frame.id}`)(frame);
-      waiting.delete(`routing:${frame.id}`);
-      return;
-    }
+    if (frame.type === "dir-records" && fire(`fetch:${frame.id}`, frame)) return;
+    if ((frame.type === "stored" || frame.type === "refused") && fire(`send:${frame.messageId}`, frame)) return;
+    if (frame.type === "routing-answer" && fire(`routing:${frame.id}`, frame)) return;
     // The link goes to the handler. A frame can arrive before open() gives
     // the link back to its caller, and a handler that waits for that variable
     // sends nothing.
@@ -116,7 +111,7 @@ export async function open(url, handlers = {}) {
   });
   connection.on("close", () => {
     link.closed = true;
-    for (const resolve of waiting.values()) resolve({ type: "refused", reason: "the relay closed the connection" });
+    for (const held of waiting.values()) held.resolve({ type: "refused", reason: "the relay closed the connection" });
     waiting.clear();
     handlers.onClose?.();
   });
@@ -148,9 +143,36 @@ export async function open(url, handlers = {}) {
         waiting.delete(key);
         resolve({ type: "refused", reason: "the relay did not answer" });
       }, timeoutMs);
-      waiting.set(key, (frame) => {
-        clearTimeout(timer);
-        resolve(frame);
+      waiting.set(key, {
+        keep: false,
+        resolve: (frame) => {
+          clearTimeout(timer);
+          resolve(frame);
+        },
+      });
+    });
+  }
+
+  // Every machine of one owner answers a question about routing. The window
+  // starts with the first answer, and the others have that long to arrive.
+  function expectMany(key, { timeoutMs, graceMs = 400 }) {
+    return new Promise((resolve) => {
+      const found = [];
+      let grace = null;
+      const done = () => {
+        clearTimeout(outer);
+        clearTimeout(grace);
+        waiting.delete(key);
+        resolve(found);
+      };
+      const outer = setTimeout(done, timeoutMs);
+      waiting.set(key, {
+        keep: true,
+        resolve: (frame) => {
+          found.push(frame);
+          clearTimeout(grace);
+          grace = setTimeout(done, graceMs);
+        },
       });
     });
   }
@@ -163,11 +185,13 @@ export async function open(url, handlers = {}) {
     return answer;
   }
 
+  // It gives every answer, one for each machine of that owner that is
+  // online, and an empty list when none is.
   async function routing(owner, project, request) {
     const id = randomUUID();
-    const answer = expect(`routing:${id}`, ANSWER_TIMEOUT_MS);
+    const answers = expectMany(`routing:${id}`, { timeoutMs: ANSWER_TIMEOUT_MS });
     connection.send(JSON.stringify({ type: "routing-request", to: owner, id, project, request }));
-    return answer;
+    return answers;
   }
 
   async function publishRecord(record) {

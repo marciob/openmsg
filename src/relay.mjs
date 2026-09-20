@@ -27,6 +27,8 @@ export const LIMITS = {
   // The directory of one project: how many owners, and how big one record.
   ownersPerProject: 200,
   recordBytes: MAX_RECORD_BYTES,
+  // The machines of one owner that hold a connection at the same time.
+  machinesPerOwner: 8,
 };
 
 export function home() {
@@ -105,19 +107,36 @@ export function sweep(owner, { now = Date.now() } = {}) {
 export function keepReceipt(owner, receipt) {
   const folder = dir("receipts", safeName(owner));
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, `${safeName(receipt.messageId)}.json`), JSON.stringify(receipt));
+  const row = { ...receipt, at: receipt.at ?? new Date().toISOString() };
+  fs.writeFileSync(path.join(folder, `${safeName(receipt.messageId)}.json`), JSON.stringify(row));
 }
 
-export function receipts(owner) {
+export function receipts(owner, { now = Date.now() } = {}) {
   const folder = dir("receipts", safeName(owner));
+  let files = [];
   try {
-    return fs.readdirSync(folder).map((f) => ({
-      file: path.join(folder, f),
-      ...JSON.parse(fs.readFileSync(path.join(folder, f), "utf8")),
-    }));
+    files = fs.readdirSync(folder);
   } catch {
     return [];
   }
+  const out = [];
+  for (const f of files) {
+    const file = path.join(folder, f);
+    try {
+      const row = { file, ...JSON.parse(fs.readFileSync(file, "utf8")) };
+      // Every machine of an owner reads a receipt, so the relay keeps it
+      // until it is old. A machine that reads one twice writes the same
+      // state twice, and that changes nothing.
+      if (now - Date.parse(row.at ?? 0) > LIMITS.ageMs) {
+        fs.rmSync(file, { force: true });
+        continue;
+      }
+      out.push(row);
+    } catch {
+      fs.rmSync(file, { force: true });
+    }
+  }
+  return out;
 }
 
 // --- the directory of a project ---------------------------------------------
@@ -210,8 +229,11 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
   if (!secure && !isLoopback(host)) {
     log("WARNING: this relay speaks no TLS. A proxy in front must end TLS, or the addresses travel in the open.");
   }
-  // One owner, one connection. A second connection of one owner replaces the
-  // first, because a gateway that reconnects must not leave a dead reader.
+  // One owner, many machines. Each machine of an owner holds its own
+  // connection, and the relay does not know which machine holds which
+  // session, because it cannot read a message. It therefore gives a message
+  // to every machine of that owner. The machine that holds the session takes
+  // it and answers, and the others stay quiet.
   const owners = new Map();
 
   server.on("upgrade", (request, socket) => {
@@ -221,6 +243,7 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
     }
     const connection = handshake(socket, request);
     let owner = null;
+    let machine = null;
 
     const answer = (object) => connection.send(JSON.stringify(object));
     const stop = (text) => {
@@ -246,24 +269,31 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
           stop("the hello does not prove that key");
           return;
         }
-        owner = named;
-        // One owner, one connection. A second machine of that owner takes
-        // the place of the first, and the first hears why. Two machines of
-        // one owner online at the same time is open work.
-        const before = owners.get(owner);
-        if (before) {
-          before.send(JSON.stringify({ type: "error", error: "another machine of this owner connected" }));
-          before.close();
+        owner = named.owner;
+        machine = named.device ?? "owner";
+        const machines = owners.get(owner) ?? new Map();
+        machines.set(connection, machine);
+        // A bound on the machines of one owner. The oldest connection goes
+        // when a new one passes the bound.
+        while (machines.size > LIMITS.machinesPerOwner) {
+          const oldest = machines.keys().next().value;
+          oldest.send(JSON.stringify({ type: "error", error: "too many machines of this owner" }));
+          oldest.close();
+          machines.delete(oldest);
         }
-        owners.set(owner, connection);
+        owners.set(owner, machines);
         sweep(owner);
         const waiting = queued(owner);
-        answer({ type: "welcome", owner, waiting: waiting.length });
-        log(`${owner} connected, ${waiting.length} waiting`);
+        answer({ type: "welcome", owner, machine, machines: machines.size, waiting: waiting.length });
+        log(`${owner} connected from ${machine}, ${machines.size} machines, ${waiting.length} waiting`);
+        // This connection is new, so it takes the waiting messages. The
+        // other machines of this owner already took them.
         for (const row of waiting) answer({ type: "deliver", wire: row.wire, from: row.from });
+        // A receipt goes to every machine that connects, because the relay
+        // does not know which machine sent the message. A machine that takes
+        // one twice writes the same state twice, and that changes nothing.
         for (const row of receipts(owner)) {
           answer({ type: "receipt", messageId: row.messageId, status: row.status, reason: row.reason });
-          fs.rmSync(row.file, { force: true });
         }
         return;
       }
@@ -271,10 +301,11 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
     });
 
     connection.on("close", () => {
-      if (owner && owners.get(owner) === connection) {
-        owners.delete(owner);
-        log(`${owner} left`);
-      }
+      const machines = owner ? owners.get(owner) : null;
+      if (!machines?.has(connection)) return;
+      machines.delete(connection);
+      if (machines.size === 0) owners.delete(owner);
+      log(`${owner} left from ${machine}, ${machines.size} machines left`);
     });
   });
 
@@ -302,18 +333,25 @@ function helloOwner(frame) {
   // A machine of that owner signs with its own key, and the delegation in
   // the hello proves that the owner allows it.
   const why = verifySignedObject(frame, { ownerId: frame.owner, keys });
-  return why === null ? frame.owner : null;
+  return why === null ? { owner: frame.owner, device: frame.signature?.device ?? null } : null;
 }
 
-// A connection that ended stays in the map until the socket says so. The
-// relay therefore reads the answer of send(), and it forgets an owner whose
-// connection does not take the text.
+// Every machine of one owner takes the frame. A connection that ended stays
+// in the map until the socket says so, so the relay reads the answer of
+// send() and forgets a machine whose connection does not take the text.
+//
+// It gives the number of machines that took it.
 function push(owners, owner, frame) {
-  const connection = owners.get(owner);
-  if (!connection) return false;
-  if (connection.send(JSON.stringify(frame))) return true;
-  owners.delete(owner);
-  return false;
+  const machines = owners.get(owner);
+  if (!machines) return 0;
+  const text = JSON.stringify(frame);
+  let sent = 0;
+  for (const connection of [...machines.keys()]) {
+    if (connection.send(text)) sent += 1;
+    else machines.delete(connection);
+  }
+  if (machines.size === 0) owners.delete(owner);
+  return sent;
 }
 
 function handle(frame, owner, answer, owners, log) {
@@ -360,7 +398,7 @@ function handle(frame, owner, answer, owners, log) {
     drop(owner, frame.messageId);
     const receipt = { type: "receipt", messageId: frame.messageId, status: frame.status, reason: frame.reason ?? null };
     // A sender that is offline gets the receipt on its next connection.
-    if (frame.to && !push(owners, frame.to, receipt)) keepReceipt(frame.to, receipt);
+    if (frame.to && push(owners, frame.to, receipt) === 0) keepReceipt(frame.to, receipt);
     log(`${owner} acknowledged ${frame.messageId}: ${frame.status}`);
     return;
   }
@@ -368,7 +406,7 @@ function handle(frame, owner, answer, owners, log) {
   // A request for routing data, and its answer, travel between two gateways.
   // The relay forwards them, and it reads nothing but the two addresses.
   if (frame.type === "routing-request" || frame.type === "routing-answer") {
-    if (!push(owners, frame.to, { ...frame, from: owner, to: undefined }) && frame.type === "routing-request") {
+    if (push(owners, frame.to, { ...frame, from: owner, to: undefined }) === 0 && frame.type === "routing-request") {
       answer({ type: "routing-answer", id: frame.id, from: frame.to, error: "that gateway is offline" });
     }
     return;

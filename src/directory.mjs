@@ -95,13 +95,14 @@ export function setEndpoint(projectId, ownerId, endpoint) {
 // The last routing data that this owner read from that member. A gateway that
 // is offline cannot answer, and the epoch in the cache still stops a message
 // that would land in a session that took the name later.
-export function setRouting(projectId, ownerId, rows, { sealTo = null } = {}) {
+export function setRouting(projectId, ownerId, rows) {
   const data = read();
   const record = data.projects[projectId]?.members?.[ownerId];
   if (!record) return null;
-  // `sealTo` is the encryption key of the machine that answered. A message
-  // that goes to that machine is sealed for it, and not for the owner key.
-  record.routing = { at: now(), rows, sealTo };
+  // Each row carries the encryption key of the machine that answered, under
+  // `sealTo`. A message for a session is sealed for the machine that holds
+  // that session, and not for the owner key.
+  record.routing = { at: now(), rows };
   save(data);
   return record.routing;
 }
