@@ -24,10 +24,11 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 
 | Vendor | How openmsg delivers the message | State |
 |---|---|---|
-| Claude Code | The inbox socket of the session | Works |
-| Codex | `codex queue` on the shared app-server daemon | Works |
-| OpenCode | `POST /session/{id}/prompt_async` on its local server | Written, not tested |
-| Gemini CLI, Cursor CLI | A hook reads the mailbox at the end of each turn | Not started |
+| Claude Code | The inbox socket of the session | Works, tested live |
+| Codex | `codex queue` on the shared app-server daemon | Works, tested live |
+| OpenCode | `POST /session/{id}/prompt_async` on its local server | Delivery tested live. A reply needs a model account |
+| Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
+| Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
 | Other agents | `tmux send-keys` | Not started |
 
 A reply is a new message. The receiving agent answers with `openmsg send`. No
@@ -52,6 +53,14 @@ node src/cli.mjs list
 ```
 
 Node 22 or later. No dependencies.
+
+Run the tests with `node --test`.
+
+An agent with no push entry point needs its hook:
+
+```
+openmsg install --hooks
+```
 
 ## Spec
 

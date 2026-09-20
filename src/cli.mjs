@@ -6,6 +6,8 @@ import * as mailbox from "./mailbox.mjs";
 import * as claude from "./adapters/claude.mjs";
 import * as opencode from "./adapters/opencode.mjs";
 import * as codex from "./adapters/codex.mjs";
+import { runHook } from "./hook.mjs";
+import { installHooks, uninstallHooks } from "./hookinstall.mjs";
 import { installGlobal, installProject, uninstall, GLOBAL_TARGETS, PROJECT_FILES } from "./install.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
@@ -18,7 +20,9 @@ const USAGE = `openmsg — messages between AI coding agents
      [--reply-to <message-id>]      keep the conversation of that message
   openmsg inbox [--json] [--all]    show the messages for this agent
   openmsg whoami                    show how this agent is addressed
+  openmsg hook <vendor>             run inside a hook of cursor or gemini
   openmsg install                   let every agent on this machine answer messages
+  openmsg install --hooks           add the hook for cursor and gemini
   openmsg install --project [dir]   the same, for one project only
   openmsg uninstall [--project]     remove what install wrote
 
@@ -168,18 +172,24 @@ try {
   else if (cmd === "inbox") await cmdInbox(args);
   else if (cmd === "install") {
     const cliPath = commandName();
-    const rows = args.includes("--project")
-      ? installProject(args.find((a) => !a.startsWith("--")) ?? process.cwd(), cliPath)
-      : installGlobal(cliPath);
+    const rows = args.includes("--hooks")
+      ? installHooks(cliPath)
+      : args.includes("--project")
+        ? installProject(args.find((a) => !a.startsWith("--")) ?? process.cwd(), cliPath)
+        : installGlobal(cliPath);
     for (const r of rows) console.log(`${r.action.padEnd(28)} ${r.file}`);
   }
   else if (cmd === "uninstall") {
     const files = args.includes("--project")
       ? PROJECT_FILES.map((f) => `${process.cwd()}/${f}`)
       : GLOBAL_TARGETS.map((t) => t.file);
-    const rows = uninstall(files);
+    const rows = args.includes("--hooks") ? uninstallHooks() : uninstall(files);
     if (rows.length === 0) console.log("nothing to remove");
     for (const r of rows) console.log(`${r.action.padEnd(28)} ${r.file}`);
+  }
+  else if (cmd === "hook") {
+    const out = await runHook(args[0] ?? "");
+    console.log(JSON.stringify(out));
   }
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);

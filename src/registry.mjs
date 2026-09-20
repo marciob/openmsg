@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { registered } from "./selfregistry.mjs";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -213,7 +214,8 @@ export async function allAgents() {
     opencodeAgents(),
     codexAgents(),
   ]);
-  return [...claude, ...opencode, ...codex];
+  // An agent with no push entry point reports itself from its hook.
+  return [...claude, ...opencode, ...codex, ...registered()];
 }
 
 export async function findAgent(query) {
