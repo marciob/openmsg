@@ -218,6 +218,23 @@ export async function allAgents() {
   return [...claude, ...opencode, ...codex, ...registered()];
 }
 
+// Discovery of one vendor. The gateway needs the session of one published
+// alias, and discovery of every vendor costs seconds, because it asks the
+// operating system for the open sockets of each process.
+export async function agentsOfVendor(vendor) {
+  if (vendor === "claude") return claudeAgents();
+  if (vendor === "opencode") return opencodeAgents();
+  if (vendor === "codex") {
+    const live = await codexAgents();
+    return live.length > 0 ? live : codexAgentsFromFiles();
+  }
+  return registered();
+}
+
+export async function findSession(vendor, id) {
+  return (await agentsOfVendor(vendor)).find((a) => a.id === id) ?? null;
+}
+
 export async function findAgent(query) {
   const agents = await allAgents();
   const [vendor, name] = query.includes(":") ? [query.split(":")[0], query.split(":").slice(1).join(":")] : [null, query];

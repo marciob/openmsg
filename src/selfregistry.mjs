@@ -5,13 +5,18 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const ROOT = process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg");
-const DIR = path.join(ROOT, "agents");
+// The home reads from the environment at each call. A gateway that stands for
+// another person therefore reads the records of that person, and not of this
+// one.
+function dir() {
+  return path.join(process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg"), "agents");
+}
 
 // A session that no hook reported for this long is gone from the list.
 export const STALE_MS = 6 * 3600 * 1000;
 
 export function register({ vendor, id, name, cwd }) {
+  const DIR = dir();
   fs.mkdirSync(DIR, { recursive: true });
   const file = path.join(DIR, `${vendor}-${id}.json`.replace(/[^A-Za-z0-9._-]/g, "_"));
   const record = { vendor, id, name, cwd: cwd ?? null, lastSeen: Date.now() };
@@ -20,6 +25,7 @@ export function register({ vendor, id, name, cwd }) {
 }
 
 export function registered({ maxAgeMs = STALE_MS } = {}) {
+  const DIR = dir();
   let files = [];
   try {
     files = fs.readdirSync(DIR).filter((f) => f.endsWith(".json"));

@@ -7,7 +7,11 @@ import path from "node:path";
 import os from "node:os";
 import { address } from "./envelope.mjs";
 
-const ROOT = process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg");
+// The home reads from the environment at each call, so one process can hold
+// the mailbox of one person and the mailbox of another.
+function root() {
+  return process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg");
+}
 
 // The file name encodes the address. encodeURIComponent keeps the name unique,
 // because two different addresses never give the same name, and it removes the
@@ -21,7 +25,7 @@ function encodeName(addr) {
 }
 
 function boxPath(agent) {
-  return path.join(ROOT, "inbox", `${encodeName(address(agent))}.jsonl`);
+  return path.join(root(), "inbox", `${encodeName(address(agent))}.jsonl`);
 }
 
 export function addressOfFile(file) {

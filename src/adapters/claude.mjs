@@ -7,14 +7,14 @@
 import net from "node:net";
 import { render } from "../envelope.mjs";
 
-export async function deliver(agent, message, { token } = {}) {
+export async function deliver(agent, message, { token, text = null } = {}) {
   const socketPath = agent.transport.path;
   const lines = [];
   if (token) lines.push(JSON.stringify({ type: "auth", token }));
   lines.push(
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: render(message) },
+      message: { role: "user", content: text ?? render(message) },
     }),
   );
 

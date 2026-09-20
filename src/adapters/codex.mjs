@@ -9,11 +9,11 @@ import { render } from "../envelope.mjs";
 
 const run = promisify(execFile);
 
-export async function deliver(agent, message) {
+export async function deliver(agent, message, { text = null } = {}) {
   try {
     const { stdout } = await run(
       "codex",
-      ["queue", "--thread", agent.id, "--message", render(message)],
+      ["queue", "--thread", agent.id, "--message", text ?? render(message)],
       { timeout: 15000 },
     );
     return { delivered: true, transport: "codex-queue", detail: stdout.trim() };
