@@ -19,6 +19,7 @@ import * as relay from "./relay.mjs";
 import * as relaylink from "./relaylink.mjs";
 import * as outbox from "./outbox.mjs";
 import * as limits from "./limits.mjs";
+import * as device from "./device.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,6 +57,13 @@ For the agents of another person (version 0.2, in progress):
   openmsg accept <id> [--always]    give a held message to the agent
   openmsg ack <id>                  say that you read a message
   openmsg limits                    the limits that this machine holds
+  openmsg device create [--label <n>]  give this machine its own keys
+  openmsg device request            ask the machine that holds the owner key
+  openmsg device grant <token>      answer a request, on the owner machine
+     [--days <n>] [--project <id>]
+  openmsg device accept <token>     keep the answer, on the new machine
+  openmsg device show               the machine, and what it may sign
+  openmsg dir revoke-device <project-id> <device-id>
   openmsg relay start [--port <n>]  run the relay of a team
   openmsg relay use <url>           send through that relay
   openmsg outbox [--all]            the messages that wait for a receipt
@@ -221,6 +229,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
   const link = direct ? null : await relaylink.open(relayUrl, { onReceipt: (frame) => receipts.push(frame) });
 
   let rows;
+  let sealTo = null;
   let label = member.label;
   try {
     const answer = direct
@@ -228,6 +237,10 @@ async function cmdSendRemote(target, text, replyTo, args) {
       : await gateway.routingOverRelay(link, member, project);
     rows = answer.routing;
     label = answer.label ?? label;
+    // The gateway of the other person answered from one machine. A message
+    // for that machine is sealed for its key, and the owner key opens
+    // nothing that this machine holds.
+    sealTo = answer.delegation?.keys?.encryption ?? null;
   } catch (e) {
     // The gateway of the other person is offline. The routing data that this
     // machine read before still names the session and the epoch, and a
@@ -240,6 +253,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
     console.error(`openmsg: ${e.message}`);
     console.error(`openmsg: using the routing data of ${cached.at}`);
     rows = cached.rows;
+    sealTo = cached.sealTo ?? null;
   }
 
   const row = rows.find((r) => r.alias === alias || r.name === alias || r.session === alias);
@@ -262,7 +276,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
     hops: answered?.message?.openmsg?.hops ?? [],
     workspace: remote.workspaceOf(),
   });
-  const wire = remote.pack(message, { recipient: member });
+  const wire = remote.pack(message, { recipient: member, sealTo });
   const how = {
     "adapter-accepted": `reached the agent of ${member.label}`,
     held: `waits for ${member.label} to accept you`,
@@ -319,6 +333,73 @@ function waitForReceipt(receipts, messageId, ms) {
     };
     look();
   });
+}
+
+// The keys of one machine, and the record that the owner signs for them.
+function cmdDevice(args) {
+  const [sub, ...rest] = args;
+  if (sub === "create") {
+    const record = device.create({ label: flag(rest, "label"), force: rest.includes("--force") });
+    console.log(`machine ${record.deviceId} (${record.label})`);
+    console.log(`keys in  ${device.paths().dir}`);
+    if (identity.exists() && identity.hasPrivateKeys()) {
+      // This machine holds the owner key, so it answers its own request.
+      const { record: given } = device.grant(device.readRequest(device.request()), {
+        days: Number(flag(rest, "days") ?? device.DEFAULT_DAYS),
+        projects: flag(rest, "project") ? [flag(rest, "project")] : "all",
+      });
+      device.saveDelegation(given);
+      console.log(`the owner key signed it until ${given.expiresAt}`);
+      console.log("From now on this machine signs with its own key.");
+    } else {
+      console.log("This machine holds no owner key. Run: openmsg device request");
+    }
+    return;
+  }
+  if (sub === "request") {
+    console.log(device.request());
+    console.log("");
+    console.log("Give this text to the machine that holds your owner key, and run there:");
+    console.log("  openmsg device grant <token>");
+    return;
+  }
+  if (sub === "grant") {
+    const [token] = positional(rest, ["days", "project"]);
+    const ask = device.readRequest(token);
+    const { record, token: answer } = device.grant(ask, {
+      days: Number(flag(rest, "days") ?? device.DEFAULT_DAYS),
+      projects: flag(rest, "project") ? [flag(rest, "project")] : "all",
+    });
+    console.log(`machine  ${record.device} (${record.label})`);
+    console.log(`projects ${record.projects === "all" ? "all" : record.projects.join(", ")}`);
+    console.log(`until    ${record.expiresAt}`);
+    console.log("");
+    console.log(answer);
+    console.log("");
+    console.log("Give this text back to that machine, and run there: openmsg device accept <token>");
+    return;
+  }
+  if (sub === "accept") {
+    const [token] = positional(rest);
+    const record = device.saveDelegation(device.readGrant(token));
+    console.log(`this machine signs for ${record.owner} until ${record.expiresAt}`);
+    return;
+  }
+  if (sub === "show" || sub === undefined) {
+    const record = device.load();
+    console.log(`machine   ${record.deviceId} (${record.label})`);
+    console.log(`created   ${record.createdAt}`);
+    const held = record.delegation;
+    if (!held) {
+      console.log("It has no delegation, so the owner key signs each message. Run: openmsg device request");
+      return;
+    }
+    console.log(`owner     ${held.owner}`);
+    console.log(`projects  ${held.projects === "all" ? "all" : held.projects.join(", ")}`);
+    console.log(`until     ${held.expiresAt}`);
+    return;
+  }
+  throw new Error("usage: openmsg device create | request | grant <token> | accept <token> | show");
 }
 
 async function cmdRelay(args) {
@@ -625,6 +706,9 @@ function cmdDir(args) {
       for (const r of directory.revoked(p.id)) {
         console.log(`  revoked ${r.ownerId} at ${r.at}${r.reason ? ` · ${r.reason}` : ""}`);
       }
+      for (const r of directory.revokedDevices(p.id)) {
+        console.log(`  revoked machine ${r.device} at ${r.at}${r.reason ? ` · ${r.reason}` : ""}`);
+      }
     }
     return;
   }
@@ -634,6 +718,13 @@ function cmdDir(args) {
     const member = memberOf(project, who);
     const record = directory.setEndpoint(project, member.ownerId, url);
     console.log(`${record.label} (${record.ownerId}) answers at ${record.endpoint}`);
+    return;
+  }
+  if (sub === "revoke-device") {
+    const [projectId, deviceId] = positional(rest, ["reason"]);
+    const record = directory.revokeDevice(projectId, deviceId, flag(rest, "reason"));
+    console.log(`revoked the machine ${record.device} in ${projectId} at ${record.at}`);
+    console.log("The identity of that person holds. Only that machine stops.");
     return;
   }
   if (sub === "revoke") {
@@ -690,6 +781,7 @@ try {
     console.log(JSON.stringify(out));
   }
   else if (cmd === "gateway") await cmdGateway(args);
+  else if (cmd === "device") cmdDevice(args);
   else if (cmd === "relay") await cmdRelay(args);
   else if (cmd === "outbox") cmdOutbox(args);
   else if (cmd === "publish") await cmdPublish(args);
