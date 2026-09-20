@@ -221,7 +221,9 @@ function parse(buffer, expectMask) {
 // It opens a connection and it gives back a Connection. The answer of the
 // server must hold the value that the key of this client gives, or the
 // handshake fails.
-export function connect(url, { timeoutMs = 10_000 } = {}) {
+// `tlsOptions` reaches node:tls. A team with its own certificate passes `ca`,
+// and then the client trusts that certificate and no other one.
+export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {} } = {}) {
   const address = new URL(url);
   const secure = address.protocol === "wss:";
   const port = Number(address.port || (secure ? 443 : 80));
@@ -230,7 +232,7 @@ export function connect(url, { timeoutMs = 10_000 } = {}) {
 
   return new Promise((resolve, reject) => {
     const socket = secure
-      ? tls.connect({ host: address.hostname, port, servername: address.hostname })
+      ? tls.connect({ host: address.hostname, port, servername: address.hostname, ...tlsOptions })
       : net.createConnection({ host: address.hostname, port });
     const fail = (e) => {
       socket.destroy();
