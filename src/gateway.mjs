@@ -199,7 +199,12 @@ export async function receive(wire, { deliver = deliverLocal, now = Date.now(), 
     // already reached the agent, or that already waits for the owner, does not
     // arrive a second time. A message that a rule stopped can arrive again,
     // because the reason can pass: a session that ran again, for one.
-    const settled = ["adapter-accepted", "agent-acknowledged", "replied", "held", "queued"];
+    // "queued" is not a settled state. The receiver wrote that row before it
+    // gave the message to the adapter, and a stop in that moment leaves a
+    // doubt. A second copy therefore goes to the agent again: a message that
+    // arrives twice is better than a message that nobody sees, and rule 8.7
+    // of the spec says that the agent must expect a repeat.
+    const settled = ["adapter-accepted", "agent-acknowledged", "replied", "held"];
     if (settled.includes(before.status)) {
       inbound.put({ ...before, status: before.status, reason: "duplicate" });
       log(`duplicate ${message.messageId} from ${verified.owner}: it is already "${before.status}"`);
@@ -239,7 +244,9 @@ export async function receive(wire, { deliver = deliverLocal, now = Date.now(), 
     return { status: "held", reason: "permission-hold", messageId: message.messageId };
   }
 
-  inbound.put({ ...record, status: "queued" });
+  // The message is on the disk before the adapter sees it. The reason says
+  // which moment this row belongs to.
+  inbound.put({ ...record, status: "queued", reason: "delivering", deliveryStartedAt: new Date(now).toISOString() });
   return release(record, { deliver, now, log });
 }
 
@@ -433,30 +440,32 @@ export async function routingOverRelay(link, member, projectId) {
 // a message into it, and the gateway answers with the state that the message
 // reached here.
 export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } = {}) {
-  let holder = null;
+  // Every handler takes the link from its own call. The relay pushes the
+  // waiting messages the moment the connection opens, before the caller of
+  // keep() holds anything.
   const handlers = {
     onOpen: (link) => log(`relay ${url}: connected as ${link.owner}, ${link.welcome?.waiting ?? 0} waiting`),
     onClose: () => log(`relay ${url}: the connection closed`),
     onError: (e) => log(`relay ${url}: ${e.error}`),
-    onDeliver: async ({ wire, from }) => {
+    onDeliver: async ({ wire, from }, link) => {
       const out = await receive(wire, { deliver, log, via: "relay" });
       // The acknowledgement tells the relay to forget the message, and it
-      // tells the sender what happened here.
-      holder?.link?.ack(wire.messageId, from, out.status, out.reason ?? null);
+      // tells the sender what happened here. A refusal is an answer too, and
+      // without it the message waits at the relay for ever.
+      link.ack(wire.messageId, from, out.status, out.reason ?? null);
     },
     onReceipt: ({ messageId, status, reason }) => {
       outbox.setState(messageId, status, { reason });
       log(`receipt ${messageId}: ${status}${reason ? ` (${reason})` : ""}`);
     },
-    onRoutingRequest: async (frame) => {
+    onRoutingRequest: async (frame, link) => {
       const answer = await handleRouting(frame.request ?? {});
-      holder?.link?.connection.send(
+      link.connection.send(
         JSON.stringify({ type: "routing-answer", to: frame.from, id: frame.id, code: answer.code, body: answer.body }),
       );
     },
   };
-  holder = await relaylink.keep(url, handlers);
-  return holder;
+  return relaylink.keep(url, handlers);
 }
 
 export async function send(member, wire, { timeoutMs = 30_000 } = {}) {

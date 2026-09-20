@@ -431,6 +431,10 @@ function cmdHeld(args) {
       const why = r.reason ? ` · ${r.reason}` : "";
       console.log(`${r.messageId.slice(0, 8)}  ${String(r.status).padEnd(18)} from ${r.from?.label ?? "unknown"}${why}  ${r.at}`);
     }
+    // A state that holds a doubt says so here. No protocol removes that doubt.
+    for (const state of [...new Set(all.map((r) => r.status))]) {
+      if (inbound.EXPLAIN[state]) console.log(`${state}: ${inbound.EXPLAIN[state]}`);
+    }
     return;
   }
   const rows = inbound.list({ status: "held" });
@@ -440,7 +444,7 @@ function cmdHeld(args) {
     console.log(`from      ${row.from.label} (${row.from.owner})`);
     console.log(`project   ${row.project}`);
     console.log(`arrived   ${row.at}`);
-    console.log(`state     ${row.status}`);
+    console.log(`state     ${row.status} — ${inbound.EXPLAIN[row.status] ?? "unknown"}`);
     if (!args.includes("--text")) {
       console.log("Add --text to read it. The text is for you, and not for the agent.");
       return;
