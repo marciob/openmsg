@@ -63,11 +63,14 @@ export async function open(url, handlers = {}) {
       waiting.delete(`routing:${frame.id}`);
       return;
     }
-    if (frame.type === "deliver") handlers.onDeliver?.(frame);
-    else if (frame.type === "receipt") handlers.onReceipt?.(frame);
-    else if (frame.type === "routing-request") handlers.onRoutingRequest?.(frame);
-    else if (frame.type === "welcome") handlers.onWelcome?.(frame);
-    else if (frame.type === "error") handlers.onError?.(frame);
+    // The link goes to the handler. A frame can arrive before open() gives
+    // the link back to its caller, and a handler that waits for that variable
+    // sends nothing.
+    if (frame.type === "deliver") handlers.onDeliver?.(frame, link);
+    else if (frame.type === "receipt") handlers.onReceipt?.(frame, link);
+    else if (frame.type === "routing-request") handlers.onRoutingRequest?.(frame, link);
+    else if (frame.type === "welcome") handlers.onWelcome?.(frame, link);
+    else if (frame.type === "error") handlers.onError?.(frame, link);
   });
   connection.on("close", () => {
     link.closed = true;

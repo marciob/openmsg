@@ -26,6 +26,22 @@ function file() {
   return path.join(home(), "inbound.jsonl");
 }
 
+// What each state says, in one sentence. A person reads these words, and case
+// 14 of the acceptance demonstration needs them: after a crash between the
+// injection and the acknowledgement, the receiver must say that it does not
+// know whether the model read the message.
+export const EXPLAIN = {
+  queued:
+    "it waits: the sender holds it, or the receiver holds it before the adapter takes it. " +
+    "After a stop here, nobody knows whether the adapter took it",
+  held: "it waits for the owner, and no model read it",
+  "adapter-accepted": "the adapter took it, and whether the model read it is unknown",
+  "agent-acknowledged": "the agent said that it read it",
+  replied: "the agent answered it",
+  refused: "a rule stopped it",
+  expired: "the deadline passed",
+};
+
 export function put(record) {
   if (record.status && !STATES.includes(record.status)) {
     throw new Error(`"${record.status}" is not a state of a message. The states are: ${STATES.join(", ")}`);
