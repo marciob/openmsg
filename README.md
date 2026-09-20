@@ -130,11 +130,15 @@ four main agents has an official way to take a message while it runs.
 
 ## Spec
 
-The protocol has a written specification: version 0.1 for the agents of one
-person on one machine, and version 0.2 for the agents of different people on
-one project. The code implements both, and the fourteen acceptance cases of
-0.2 pass as tests. Those documents stay outside this repository. Ask for a
-copy.
+`spec/openmsg-0.2-draft.md` is the protocol for the agents of different
+people on one project: the identity of an owner, the sealed envelope, the
+gateway, the relay, the states of a message, and the trust rules. The code in
+this repository implements it, and the fourteen acceptance cases of its
+section 11 pass as tests.
+
+Version 0.1, for the agents of one person on one machine, has its own
+document. It is not in this repository. The 0.2 document names the rules of
+0.1 that still hold.
 
 ## License
 
