@@ -46,13 +46,21 @@ export function list(agent, { unreadOnly = false } = {}) {
   return unreadOnly ? rows.filter((r) => r.status !== "read") : rows;
 }
 
-export function markRead(agent) {
+// markRead takes the ids that the agent saw. A message that the reader refused
+// keeps its state, so the next read reports it again.
+export function markRead(agent, messageIds) {
   const file = boxPath(agent);
   if (!fs.existsSync(file)) return 0;
+  const seen = new Set(messageIds);
   const rows = list(agent);
-  const unread = rows.filter((r) => r.status !== "read").length;
-  fs.writeFileSync(file, rows.map((r) => JSON.stringify({ ...r, status: "read" }) + "\n").join(""));
-  return unread;
+  let count = 0;
+  const next = rows.map((r) => {
+    if (!seen.has(r.messageId) || r.status === "read") return r;
+    count += 1;
+    return { ...r, status: "read" };
+  });
+  fs.writeFileSync(file, next.map((r) => JSON.stringify(r) + "\n").join(""));
+  return count;
 }
 
 // A reply needs the message that it answers. The sender wrote that message into

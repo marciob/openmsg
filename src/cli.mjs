@@ -73,14 +73,19 @@ async function cmdSend(target, text, replyTo = null) {
   } else if (to.vendor === "codex") {
     result = await codex.deliver(to, message);
   } else {
-    throw new Error(`no adapter for vendor "${to.vendor}" yet`);
+    // An agent with no push entry point, such as Gemini CLI or Cursor CLI,
+    // reads its mailbox at the end of a turn. The message waits there.
+    result = { delivered: false, transport: "mailbox" };
   }
 
   // "delivered" means an adapter pushed the message into the live session.
   // "queued" means it waits in the mailbox for an agent that reads it at the
   // end of a turn.
   mailbox.put(to, message, result.delivered ? "delivered" : "queued");
-  console.log(`sent to ${address(to)} over ${result.transport} (${message.messageId})`);
+  const how = result.delivered
+    ? `sent to ${address(to)} over ${result.transport}`
+    : `queued for ${address(to)} in the mailbox. That agent reads it at the end of its next turn`;
+  console.log(`${how} (${message.messageId})`);
 }
 
 async function cmdInbox(args) {
@@ -101,7 +106,7 @@ async function cmdInbox(args) {
     for (const r of rows) {
       console.log(`from ${address(r.openmsg.from)} at ${r.createdAt}\n${r.parts.map((p) => p.text).join("\n")}\n`);
     }
-    mailbox.markRead(me);
+    mailbox.markRead(me, rows.map((r) => r.messageId));
   }
 }
 
