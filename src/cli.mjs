@@ -20,6 +20,7 @@ import * as relaylink from "./relaylink.mjs";
 import * as outbox from "./outbox.mjs";
 import * as limits from "./limits.mjs";
 import * as device from "./device.mjs";
+import * as dirsync from "./dirsync.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -64,6 +65,10 @@ For the agents of another person (version 0.2, in progress):
   openmsg device accept <token>     keep the answer, on the new machine
   openmsg device show               the machine, and what it may sign
   openmsg dir revoke-device <project-id> <device-id>
+  openmsg dir sync                  send and read the directory of each project
+  openmsg dir pending               the owners that wait for you to accept them
+  openmsg dir accept <owner> --fingerprint "<value>"
+  openmsg device revoke <id>        tell the team that a machine of yours is gone
   openmsg relay start [--port <n>]  run the relay of a team
   openmsg relay use <url>           send through that relay
   openmsg outbox [--all]            the messages that wait for a receipt
@@ -336,7 +341,7 @@ function waitForReceipt(receipts, messageId, ms) {
 }
 
 // The keys of one machine, and the record that the owner signs for them.
-function cmdDevice(args) {
+async function cmdDevice(args) {
   const [sub, ...rest] = args;
   if (sub === "create") {
     const record = device.create({ label: flag(rest, "label"), force: rest.includes("--force") });
@@ -399,7 +404,30 @@ function cmdDevice(args) {
     console.log(`until     ${held.expiresAt}`);
     return;
   }
-  throw new Error("usage: openmsg device create | request | grant <token> | accept <token> | show");
+  if (sub === "revoke") {
+    const [which] = positional(rest, ["reason"]);
+    if (!which) throw new Error("usage: openmsg device revoke <device-id> [--reason <text>]");
+    const me = identity.load();
+    const reason = flag(rest, "reason");
+    const records = [];
+    for (const entry of directory.projects()) {
+      if (!directory.member(entry.id, me.ownerId)) continue;
+      directory.revokeDevice(entry.id, which, reason, { owner: me.ownerId });
+      records.push(dirsync.revokeDeviceRecord(entry.id, which, reason));
+      console.log(`revoked ${which} in ${entry.id}`);
+    }
+    const url = gateway.settings().relay;
+    if (!url || records.length === 0) {
+      console.log("Run: openmsg dir sync, on a machine with a relay, so the team learns it.");
+      return;
+    }
+    return relaylink.open(url).then(async (link) => {
+      for (const record of records) await link.publishRecord(record);
+      link.close();
+      console.log(`the team learns it through ${url}`);
+    });
+  }
+  throw new Error("usage: openmsg device create | request | grant <token> | accept <token> | revoke <id> | show");
 }
 
 async function cmdRelay(args) {
@@ -684,7 +712,7 @@ function cmdInvite(args) {
   throw new Error('usage: openmsg invite create | invite show <token> | invite accept <token> --fingerprint "<value>"');
 }
 
-function cmdDir(args) {
+async function cmdDir(args) {
   const [sub, ...rest] = args;
   if (sub === "list" || sub === undefined) {
     if (rest.includes("--json")) {
@@ -718,6 +746,40 @@ function cmdDir(args) {
     const member = memberOf(project, who);
     const record = directory.setEndpoint(project, member.ownerId, url);
     console.log(`${record.label} (${record.ownerId}) answers at ${record.endpoint}`);
+    return;
+  }
+  if (sub === "sync") {
+    const url = gateway.settings().relay;
+    if (!url) throw new Error("no relay. Run: openmsg relay use <url>");
+    return relaylink.open(url).then(async (link) => {
+      const named = flag(rest, "project");
+      const rows = await gateway.syncDirectory(link, {
+        log: (line) => console.log(line),
+        projects: named ? [named] : [],
+      });
+      link.close();
+      const total = rows.reduce((n, r) => n + r.added.length + r.updated.length + r.revoked.length, 0);
+      console.log(`${rows.length} projects, ${total} changes, ${directory.pending().length} owners wait for you`);
+    });
+  }
+  if (sub === "pending") {
+    const rows = directory.pending(flag(rest, "project") ?? null);
+    if (rows.length === 0) {
+      console.log("nobody waits");
+      return;
+    }
+    for (const r of rows) {
+      console.log(`${r.ownerId}  ${String(r.label).padEnd(12)} ${r.fingerprint}  ${r.project}`);
+    }
+    console.log("Compare a fingerprint with that person, and then:");
+    console.log('  openmsg dir accept <owner> --fingerprint "<value>"');
+    return;
+  }
+  if (sub === "accept") {
+    const [who] = positional(rest, ["fingerprint", "project"]);
+    const project = projectId(rest);
+    const record = dirsync.acceptPending(project, who, flag(rest, "fingerprint"));
+    console.log(`${record.label} (${record.ownerId}) is now a member of ${project}`);
     return;
   }
   if (sub === "revoke-device") {
@@ -781,7 +843,7 @@ try {
     console.log(JSON.stringify(out));
   }
   else if (cmd === "gateway") await cmdGateway(args);
-  else if (cmd === "device") cmdDevice(args);
+  else if (cmd === "device") await cmdDevice(args);
   else if (cmd === "relay") await cmdRelay(args);
   else if (cmd === "outbox") cmdOutbox(args);
   else if (cmd === "publish") await cmdPublish(args);
@@ -793,7 +855,7 @@ try {
   else if (cmd === "limits") cmdLimits();
   else if (cmd === "id") cmdId(args);
   else if (cmd === "invite") cmdInvite(args);
-  else if (cmd === "dir") cmdDir(args);
+  else if (cmd === "dir") await cmdDir(args);
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);
 } catch (e) {

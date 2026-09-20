@@ -30,6 +30,8 @@ import * as outbox from "./outbox.mjs";
 import * as relaylink from "./relaylink.mjs";
 import * as limits from "./limits.mjs";
 import * as device from "./device.mjs";
+import * as dirsync from "./dirsync.mjs";
+import { settings, saveSettings, endpointFor } from "./settings.mjs";
 
 export const PATHS = {
   message: "/openmsg/v2/message",
@@ -43,30 +45,7 @@ export const REQUEST_WINDOW_MS = 120_000;
 
 // --- the address of this gateway -----------------------------------------
 
-function settingsFile() {
-  return path.join(identity.home(), "gateway.json");
-}
-
-export function settings() {
-  try {
-    return JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-export function saveSettings(next) {
-  const file = settingsFile();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const data = { ...settings(), ...next, updatedAt: new Date().toISOString() };
-  fs.writeFileSync(file, JSON.stringify(data, null, 1) + "\n");
-  return data;
-}
-
-export function endpointFor(host, port) {
-  const name = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  return `http://${name}:${port}`;
-}
+export { settings, saveSettings, endpointFor };
 
 // --- signatures on a request and on an answer ------------------------------
 
@@ -445,6 +424,37 @@ export async function routingOverRelay(link, member, projectId) {
   return checkRoutingAnswer(answer.body ?? answer, member, projectId);
 }
 
+// The directory of section 12.1: this owner publishes its own records, and it
+// reads the records of the project. A record never adds a member, so an owner
+// that nobody accepted waits in a list with its fingerprint.
+export async function syncDirectory(link, { log = () => {}, projects = [] } = {}) {
+  // A machine that holds no project yet still knows which projects its owner
+  // allowed it to sign for, because the delegation names them.
+  const held = device.exists() ? device.delegation() : null;
+  const ids = new Set(directory.projects().map((p) => p.id));
+  for (const id of Array.isArray(held?.projects) ? held.projects : []) ids.add(id);
+  for (const id of projects) ids.add(id);
+  const out = [];
+  for (const entry of [...ids].map((id) => ({ id }))) {
+    for (const record of dirsync.mine(entry.id)) {
+      const answer = await link.publishRecord(record);
+      if (answer.type !== "dir-stored") log(`the relay refused a ${record.kind} record: ${answer.reason}`);
+    }
+    const got = await link.fetchDirectory(entry.id);
+    if (got.error) {
+      log(`the directory of ${entry.id}: ${got.error}`);
+      continue;
+    }
+    const applied = dirsync.apply(entry.id, got.records ?? []);
+    for (const row of applied.added) log(`the directory gave ${row.label} (${row.owner}) in ${entry.id}`);
+    for (const row of applied.updated) log(`${row.owner} answers at ${row.endpoint} now`);
+    for (const row of applied.revoked) log(`${row.owner} revoked the machine ${row.device}`);
+    for (const row of applied.pending) log(`${row.label} (${row.ownerId}) waits for you. Run: openmsg dir pending`);
+    out.push({ project: entry.id, ...applied });
+  }
+  return out;
+}
+
 // The gateway holds one connection to the relay of its team. The relay pushes
 // a message into it, and the gateway answers with the state that the message
 // reached here.
@@ -453,11 +463,22 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } 
   // waiting messages the moment the connection opens, before the caller of
   // keep() holds anything.
   const handlers = {
-    onOpen: (link) => log(`relay ${url}: connected as ${link.owner}, ${link.welcome?.waiting ?? 0} waiting`),
+    onOpen: (link) => {
+      log(`relay ${url}: connected as ${link.owner}, ${link.welcome?.waiting ?? 0} waiting`);
+      // The directory travels on the same connection, at each start.
+      syncDirectory(link, { log }).catch((e) => log(`the directory did not travel: ${e.message}`));
+    },
     onClose: () => log(`relay ${url}: the connection closed`),
     onError: (e) => log(`relay ${url}: ${e.error}`),
     onDeliver: async ({ wire, from }, link) => {
       const out = await receive(wire, { deliver, log, via: "relay" });
+      // A session that this machine does not hold is not an answer for the
+      // whole owner. Another machine of this owner can hold it, so the
+      // message stays at the relay, and no acknowledgement leaves here.
+      if (["not-published", "session-gone"].includes(out.reason)) {
+        log(`${wire.messageId} stays at the relay: ${out.reason}`);
+        return;
+      }
       // The acknowledgement tells the relay to forget the message, and it
       // tells the sender what happened here. A refusal is an answer too, and
       // without it the message waits at the relay for ever.

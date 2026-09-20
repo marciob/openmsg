@@ -112,16 +112,48 @@ export function routingOf(projectId, ownerId) {
 
 // A machine of a member, and not the member. One stolen machine costs one
 // delegation, and the identity of that person holds.
-export function revokeDevice(projectId, deviceId, reason = null) {
+export function revokeDevice(projectId, deviceId, reason = null, { owner = null } = {}) {
   const data = read();
   const entry = data.projects[projectId];
   if (!entry) throw new Error(`no project ${projectId} in the directory`);
   entry.revokedDevices = entry.revokedDevices ?? [];
   if (entry.revokedDevices.some((r) => r.device === deviceId)) return entry.revokedDevices.find((r) => r.device === deviceId);
-  const record = { device: deviceId, at: now(), reason };
+  // `owner` names the person whose machine it is. That person tells the
+  // other members, and no other person speaks for those machines.
+  const record = { device: deviceId, owner, at: now(), reason };
   entry.revokedDevices.push(record);
   save(data);
   return record;
+}
+
+// An owner that arrived from the relay, and that this person did not accept
+// yet. A record never adds a member, and this list is where one waits.
+export function putPending(projectId, { ownerId, label, keys, fingerprint }) {
+  const data = read();
+  const entry = data.projects[projectId];
+  if (!entry) return null;
+  entry.pending = entry.pending ?? {};
+  entry.pending[ownerId] = { ownerId, label, keys, fingerprint, at: entry.pending[ownerId]?.at ?? now() };
+  save(data);
+  return entry.pending[ownerId];
+}
+
+export function pending(projectId = null) {
+  const out = [];
+  for (const entry of projects()) {
+    if (projectId && entry.id !== projectId) continue;
+    for (const row of Object.values(entry.pending ?? {})) out.push({ project: entry.id, ...row });
+  }
+  return out;
+}
+
+export function dropPending(projectId, ownerId) {
+  const data = read();
+  const entry = data.projects[projectId];
+  if (!entry?.pending?.[ownerId]) return false;
+  delete entry.pending[ownerId];
+  save(data);
+  return true;
 }
 
 export function isDeviceRevoked(projectId, deviceId) {
