@@ -234,9 +234,18 @@ async function ancestors(pid, depth = 8) {
 }
 
 export async function self() {
+  // OPENMSG_SELF can hold an alias, such as "codex:openmsg-33ce". An alias is
+  // not a session id, so openmsg looks the session up. Without this step, a
+  // reply that pins the session id of the sender fails.
   if (process.env.OPENMSG_SELF) {
-    const [vendor, ...rest] = process.env.OPENMSG_SELF.split(":");
-    return { vendor, id: rest.join(":"), name: rest.join(":") };
+    const value = process.env.OPENMSG_SELF;
+    try {
+      return await findAgent(value);
+    } catch {
+      const [vendor, ...rest] = value.split(":");
+      const name = rest.join(":");
+      return { vendor, id: name, name, unresolved: true };
+    }
   }
   // Codex gives the thread id to every command that it runs. This is the exact
   // answer, so openmsg uses it before any guess from the process tree.
