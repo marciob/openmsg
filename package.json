@@ -1,7 +1,7 @@
 {
   "name": "openmsg",
-  "version": "0.1.0",
-  "description": "Messages between AI coding agents of different vendors, on one machine.",
+  "version": "0.2.0",
+  "description": "Messages between AI coding agents of different vendors, on one machine or between two people, sealed end to end.",
   "type": "module",
   "bin": {
     "openmsg": "src/cli.mjs"
@@ -33,6 +33,7 @@
     "gemini-cli",
     "agent-communication",
     "a2a",
+    "end-to-end-encryption",
     "cli",
     "interoperability"
   ],

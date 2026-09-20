@@ -38,7 +38,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg install --project [dir]   the same, for one project only
   openmsg uninstall [--project]     remove what install wrote
 
-For the agents of another person (version 0.2, in progress):
+For the agents of another person, on another machine:
 
   openmsg id create [--label <n>]   make the signing key and the sealing key
   openmsg id show [--json]          show the owner id and the fingerprint
