@@ -92,6 +92,22 @@ export function setEndpoint(projectId, ownerId, endpoint) {
   return record;
 }
 
+// The last routing data that this owner read from that member. A gateway that
+// is offline cannot answer, and the epoch in the cache still stops a message
+// that would land in a session that took the name later.
+export function setRouting(projectId, ownerId, rows) {
+  const data = read();
+  const record = data.projects[projectId]?.members?.[ownerId];
+  if (!record) return null;
+  record.routing = { at: now(), rows };
+  save(data);
+  return record.routing;
+}
+
+export function routingOf(projectId, ownerId) {
+  return project(projectId)?.members?.[ownerId]?.routing ?? null;
+}
+
 export function isRevoked(projectId, ownerId) {
   const entry = project(projectId);
   return Boolean(entry?.revoked?.some((r) => r.ownerId === ownerId));
