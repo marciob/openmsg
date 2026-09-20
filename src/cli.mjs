@@ -93,21 +93,32 @@ async function cmdInbox(args) {
   const all = mailbox.list(me, { unreadOnly: !args.includes("--all") });
   // The sender refuses a long chain, but a sender that does not follow this
   // spec can still write to the mailbox. The reader refuses it again.
-  const overLimit = all.filter((r) => (r.openmsg?.hops?.length ?? 0) > MAX_HOPS);
-  const rows = all.filter((r) => (r.openmsg?.hops?.length ?? 0) <= MAX_HOPS);
-  if (overLimit.length > 0) {
-    console.error(`openmsg: ${overLimit.length} message(s) refused: more than ${MAX_HOPS} hops`);
-  }
+  const limit = (r) => (r.openmsg?.hops?.length ?? 0) <= MAX_HOPS;
+  const rows = all.filter(limit);
+  const refused = all.filter((r) => !limit(r)).map((r) => ({
+    messageId: r.messageId,
+    from: r.openmsg?.from ? address(r.openmsg.from) : "unknown",
+    hops: r.openmsg?.hops?.length ?? 0,
+    reason: `more than ${MAX_HOPS} hops`,
+  }));
+
+  // Everything goes to stdout. A hook that reads stdout alone must still learn
+  // that openmsg refused a message.
   if (args.includes("--json")) {
-    console.log(JSON.stringify(rows, null, 2));
-  } else if (rows.length === 0) {
-    console.log("no messages");
+    console.log(JSON.stringify({ messages: rows, refused }, null, 2));
   } else {
-    for (const r of rows) {
-      console.log(`from ${address(r.openmsg.from)} at ${r.createdAt}\n${r.parts.map((p) => p.text).join("\n")}\n`);
+    for (const r of refused) {
+      console.log(`refused ${r.messageId} from ${r.from}: ${r.reason}`);
     }
-    mailbox.markRead(me, rows.map((r) => r.messageId));
+    if (rows.length === 0) {
+      console.log("no messages");
+    } else {
+      for (const r of rows) {
+        console.log(`from ${address(r.openmsg.from)} at ${r.createdAt}\n${r.parts.map((p) => p.text).join("\n")}\n`);
+      }
+    }
   }
+  mailbox.markRead(me, rows.map((r) => r.messageId));
 }
 
 // Agents read the instruction block. It says "openmsg" when the command is on
