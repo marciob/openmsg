@@ -1,12 +1,18 @@
 # openmsg
 
-Messages between AI coding agents of different vendors, on one machine.
+Messages between AI coding agents of different vendors, on one machine or
+between two people.
 
 A Claude Code session can send a message to a Codex session. An OpenCode session
 can answer a Claude Code session. The message goes into the session that already
 runs, with its context, and not into a new process.
 
-Status: early work. The Claude Code path works. See "State" below.
+Two people who work on one project can do the same across their machines. Those
+messages are sealed end to end, and the server that carries them cannot read
+one.
+
+Status: version 0.1 is on npm and works. Version 0.2, for two people, is
+written and tested in this repository, and it is not released yet.
 
 ## How it works
 
@@ -34,6 +40,43 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 A reply is a new message. The receiving agent answers with `openmsg send`. No
 program reads the screen of another program.
 
+## The agents of another person
+
+Version 0.2 adds one more step: an address with an owner, such as
+`claude:api-worker@alice`.
+
+```
+openmsg id create --label alice       # a signing key and a sealing key
+openmsg invite create --project web   # a token for the other person
+openmsg invite accept <token> --fingerprint "A1B2 ..."
+openmsg publish claude:api-worker     # let the project reach this session
+openmsg gateway start --relay <url>   # the one process that the network reaches
+openmsg send claude:reviewer@bob "the migration drops a column"
+```
+
+What holds:
+
+- **Nothing is published by default.** A session is reachable after
+  `openmsg publish`, and only in the project that the owner names.
+- **A new sender waits.** The first message of a person stays outside the
+  model until the owner runs `openmsg accept`. Membership of a project is not
+  permission to write into a session.
+- **Every message is sealed end to end.** The relay carries bytes that it
+  cannot read. It learns who writes to whom, when, and in which project,
+  because it needs that to route. The product does not pretend otherwise.
+- **A signature proves the person, and a fingerprint proves the key.** Two
+  people compare a fingerprint out of band before the first message.
+- **Each machine holds its own key.** The owner key stays on one machine and
+  signs a delegation for the others. One stolen machine costs one delegation,
+  and the identity of that person holds.
+- **A message never carries authority.** The receiving agent works inside the
+  permissions that its own user already gave it.
+
+The states of a message are `queued`, `held`, `adapter-accepted`,
+`agent-acknowledged`, `replied`, `refused`, and `expired`. A write to a socket
+is not a read by a model: only an event from the agent gives
+`agent-acknowledged`.
+
 ## Message format
 
 The envelope uses the field names of the A2A standard (`messageId`, `contextId`,
@@ -58,9 +101,11 @@ git clone https://github.com/marciob/openmsg.git && cd openmsg
 node src/cli.mjs list
 ```
 
-Node 22 or later. No dependencies.
+Node 22 or later. No dependencies, and none for the relay either: the
+WebSocket of `src/wsframe.mjs` is both sides of RFC 6455 in one small file.
 
-Run the tests with `node --test`.
+Run the tests with `node --test`. Seventy-eight of them, and they need no
+account: they run two gateways and a relay on this machine, as two people.
 
 An agent with no push entry point needs its hook:
 
@@ -71,15 +116,12 @@ openmsg install --hooks
 ## Spec
 
 - `docs/spec/openmsg-0.1.md`: the protocol for the agents of one person on one
-  machine. This is what the code implements.
-- `docs/spec/openmsg-0.2-draft.md`: a draft for the agents of different people
-  on one project. Not implemented.
-
-## Research
-
-`docs/research/2026-09-19-transport-research.md` gives the full comparison of the
-options, with sources: terminal typing, native entry points, subprocess calls,
-mailboxes, A2A, and ACP.
+  machine. Version 0.1.0 on npm implements it.
+- `docs/spec/openmsg-0.2-draft.md`: the protocol for the agents of different
+  people on one project. The code in this repository implements it, and the
+  fourteen cases of its section 11 pass as tests. It is not released.
+- `docs/implementations/0.2-plan.md`: the order of that work, and the faults
+  that each step found.
 
 ## License
 
