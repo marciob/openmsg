@@ -26,6 +26,8 @@ import * as inbound from "./inbound.mjs";
 import * as remote from "./remote.mjs";
 import { agentsOfVendor } from "./registry.mjs";
 import { deliverLocal } from "./deliver.mjs";
+import * as outbox from "./outbox.mjs";
+import * as relaylink from "./relaylink.mjs";
 
 export const PATHS = { message: "/openmsg/v2/message", routing: "/openmsg/v2/routing" };
 export const MAX_BODY = 256 * 1024;
@@ -176,6 +178,20 @@ export async function receive(wire, { deliver = deliverLocal, now = Date.now(), 
     verified,
   };
 
+  // A retry carries the same message id. A message that already reached the
+  // agent, or that already waits for the owner, does not arrive a second
+  // time. A message that a rule stopped can arrive again, because the reason
+  // can pass: a session that ran again, for one.
+  const before = inbound.find(message.messageId);
+  const settled = ["adapter-accepted", "agent-acknowledged", "replied", "held", "queued"];
+  if (before && before.from?.owner === verified.owner && settled.includes(before.status)) {
+    // The store keeps the state that the first copy reached, and it records
+    // that a second copy arrived.
+    inbound.put({ ...before, status: before.status, reason: "duplicate" });
+    log(`duplicate ${message.messageId} from ${verified.owner}: it is already "${before.status}"`);
+    return { status: before.status, reason: "duplicate", messageId: message.messageId };
+  }
+
   const standing = permissions.of(verified.project, verified.owner);
   if (standing === "refuse") {
     inbound.put({ ...record, status: "refused", reason: "permission-refuse" });
@@ -293,25 +309,73 @@ export function serve({ port = 0, host = "127.0.0.1", deliver = deliverLocal, lo
 
 // --- the client side -------------------------------------------------------
 
-export async function routingOf(member, projectId, { timeoutMs = 20_000 } = {}) {
-  if (!member.endpoint) {
-    throw new Error(`no endpoint for ${member.ownerId}. Run: openmsg dir endpoint ${member.ownerId} <url>`);
-  }
-  const me = identity.load();
-  const request = signObject({
+export function routingRequest(projectId) {
+  return signObject({
     kind: "routing-request",
     version: 2,
-    owner: me.ownerId,
+    owner: identity.load().ownerId,
     project: projectId,
     at: new Date().toISOString(),
     nonce: randomUUID(),
   });
-  const answer = await postJson(`${member.endpoint}${PATHS.routing}`, request, { timeoutMs });
+}
+
+// The request and the answer both carry a signature of an owner. The relay
+// forwards them, and the relay cannot make one.
+export function checkRoutingAnswer(answer, member, projectId) {
   if (!verifyObject(answer, member)) throw new Error(`the answer of ${member.ownerId} carries no valid signature`);
   if (answer.owner !== member.ownerId || answer.project !== projectId) {
     throw new Error("the answer names another owner or another project");
   }
+  directory.setRouting(projectId, member.ownerId, answer.routing);
   return answer;
+}
+
+export async function routingOf(member, projectId, { timeoutMs = 20_000 } = {}) {
+  if (!member.endpoint) {
+    throw new Error(`no endpoint for ${member.ownerId}. Run: openmsg dir endpoint ${member.ownerId} <url>`);
+  }
+  const answer = await postJson(`${member.endpoint}${PATHS.routing}`, routingRequest(projectId), { timeoutMs });
+  return checkRoutingAnswer(answer, member, projectId);
+}
+
+// The same question, over the relay. The gateway of the other person answers
+// only when it is online.
+export async function routingOverRelay(link, member, projectId) {
+  const answer = await link.routing(member.ownerId, projectId, routingRequest(projectId));
+  if (answer.error) throw new Error(`${member.label ?? member.ownerId}: ${answer.error}`);
+  if (answer.code && answer.code !== 200) throw new Error(`${member.ownerId} refused: ${answer.body?.error}`);
+  return checkRoutingAnswer(answer.body ?? answer, member, projectId);
+}
+
+// The gateway holds one connection to the relay of its team. The relay pushes
+// a message into it, and the gateway answers with the state that the message
+// reached here.
+export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } = {}) {
+  let holder = null;
+  const handlers = {
+    onOpen: (link) => log(`relay ${url}: connected as ${link.owner}, ${link.welcome?.waiting ?? 0} waiting`),
+    onClose: () => log(`relay ${url}: the connection closed`),
+    onError: (e) => log(`relay ${url}: ${e.error}`),
+    onDeliver: async ({ wire, from }) => {
+      const out = await receive(wire, { deliver, log });
+      // The acknowledgement tells the relay to forget the message, and it
+      // tells the sender what happened here.
+      holder?.link?.ack(wire.messageId, from, out.status, out.reason ?? null);
+    },
+    onReceipt: ({ messageId, status, reason }) => {
+      outbox.setState(messageId, status, { reason });
+      log(`receipt ${messageId}: ${status}${reason ? ` (${reason})` : ""}`);
+    },
+    onRoutingRequest: async (frame) => {
+      const answer = await handleRouting(frame.request ?? {});
+      holder?.link?.connection.send(
+        JSON.stringify({ type: "routing-answer", to: frame.from, id: frame.id, code: answer.code, body: answer.body }),
+      );
+    },
+  };
+  holder = await relaylink.keep(url, handlers);
+  return holder;
 }
 
 export async function send(member, wire, { timeoutMs = 30_000 } = {}) {

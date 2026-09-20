@@ -15,6 +15,9 @@ import * as permissions from "./permissions.mjs";
 import * as inbound from "./inbound.mjs";
 import * as remote from "./remote.mjs";
 import { deliverLocal } from "./deliver.mjs";
+import * as relay from "./relay.mjs";
+import * as relaylink from "./relaylink.mjs";
+import * as outbox from "./outbox.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -49,6 +52,9 @@ For the agents of another person (version 0.2, in progress):
   openmsg permit <owner> <accept|hold|refuse>
   openmsg held [<id>] [--text]      the messages that wait for you
   openmsg accept <id> [--always]    give a held message to the agent
+  openmsg relay start [--port <n>]  run the relay of a team
+  openmsg relay use <url>           send through that relay
+  openmsg outbox [--all]            the messages that wait for a receipt
 
 A message to another person goes to "claude:api-worker@alice".
 
@@ -197,13 +203,48 @@ async function cmdSendRemote(target, text, replyTo, args) {
   const answered = replyTo ? inbound.findByPrefix(replyTo) : null;
   if (replyTo && !answered) throw new Error(`no message ${replyTo} arrived from another person`);
 
-  const answer = await gateway.routingOf(member, project);
-  const row = answer.routing.find((r) => r.alias === alias || r.name === alias || r.session === alias);
+  // A member with a direct address takes the message over HTTP. A member with
+  // no address takes it through the relay of the team.
+  const relayUrl = gateway.settings().relay;
+  const direct = Boolean(member.endpoint);
+  if (!direct && !relayUrl) {
+    throw new Error(
+      `no way to reach ${member.label}: no endpoint, and no relay. ` +
+        "Run: openmsg relay use <url>, or: openmsg dir endpoint <owner> <url>",
+    );
+  }
+  const receipts = [];
+  const link = direct ? null : await relaylink.open(relayUrl, { onReceipt: (frame) => receipts.push(frame) });
+
+  let rows;
+  let label = member.label;
+  try {
+    const answer = direct
+      ? await gateway.routingOf(member, project)
+      : await gateway.routingOverRelay(link, member, project);
+    rows = answer.routing;
+    label = answer.label ?? label;
+  } catch (e) {
+    // The gateway of the other person is offline. The routing data that this
+    // machine read before still names the session and the epoch, and a
+    // session that moved refuses the message by the epoch.
+    const cached = directory.routingOf(project, member.ownerId);
+    if (!cached) {
+      link?.close();
+      throw new Error(`${e.message}. This machine holds no routing data for ${member.label} either.`);
+    }
+    console.error(`openmsg: ${e.message}`);
+    console.error(`openmsg: using the routing data of ${cached.at}`);
+    rows = cached.rows;
+  }
+
+  const row = rows.find((r) => r.alias === alias || r.name === alias || r.session === alias);
   if (!row) {
-    const names = answer.routing.map((r) => `${r.alias}@${answer.label}`).join(", ") || "nothing";
+    link?.close();
+    const names = rows.map((r) => `${r.alias}@${label}`).join(", ") || "nothing";
     throw new Error(`${member.label} does not publish "${alias}" in this project. Published: ${names}`);
   }
-  if (!row.live) console.error(`openmsg: the session ${row.alias}@${answer.label} does not run now`);
+  if (row.live === false) console.error(`openmsg: the session ${row.alias}@${label} does not run now`);
 
   const mine = await self();
   const message = remote.createRemote({
@@ -217,25 +258,111 @@ async function cmdSendRemote(target, text, replyTo, args) {
     hops: answered?.message?.openmsg?.hops ?? [],
     workspace: remote.workspaceOf(),
   });
-  const out = await gateway.send(member, remote.pack(message, { recipient: member }));
+  const wire = remote.pack(message, { recipient: member });
   const how = {
     "adapter-accepted": `reached the agent of ${member.label}`,
     held: `waits for ${member.label} to accept you`,
     queued: `waits in the mailbox of ${member.label}`,
+    "relay-holds": `the relay holds it for ${member.label}, who is offline now`,
   };
+  let out;
+  if (direct) {
+    out = await gateway.send(member, wire);
+  } else {
+    // The sender keeps its copy until a receipt arrives. The relay keeps its
+    // own copy at the same time.
+    outbox.put({ messageId: message.messageId, to: member.ownerId, project, alias: `${alias}@${label}`, wire, state: "sending" });
+    const answer = await link.send(wire);
+    if (answer.type !== "stored") {
+      outbox.setState(message.messageId, "refused", { reason: answer.reason });
+      link.close();
+      console.log(`refused by the relay: ${answer.reason} (${message.messageId})`);
+      process.exitCode = 1;
+      return;
+    }
+    outbox.setState(message.messageId, "queued");
+    // A receipt says what happened at the other end. It can arrive in a
+    // moment, or days later, and then the gateway of this owner takes it.
+    const receipt = await waitForReceipt(receipts, message.messageId, 3000);
+    link.close();
+    if (receipt) {
+      outbox.setState(message.messageId, receipt.status, { reason: receipt.reason ?? null });
+      out = { status: receipt.status, reason: receipt.reason };
+    } else {
+      out = { status: "relay-holds" };
+    }
+  }
   console.log(`${how[out.status] ?? `${out.status}${out.reason ? `: ${out.reason}` : ""}`} (${message.messageId})`);
   if (out.status === "refused") process.exitCode = 1;
 }
 
+function waitForReceipt(receipts, messageId, ms) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const look = () => {
+      const found = receipts.find((r) => r.messageId === messageId);
+      if (found) return resolve(found);
+      if (Date.now() - started > ms) return resolve(null);
+      setTimeout(look, 50);
+    };
+    look();
+  });
+}
+
+async function cmdRelay(args) {
+  const [sub, ...rest] = args;
+  if (sub === "start") {
+    const host = flag(rest, "host") ?? "127.0.0.1";
+    const port = Number(flag(rest, "port") ?? 7800);
+    const running = await relay.serve({ port, host, log: (line) => console.log(`${new Date().toISOString()} ${line}`) });
+    console.log(`relay listens on ${running.url}, store in ${relay.home()}`);
+    console.log("It carries sealed bytes. It cannot read a message.");
+    console.log("It learns who writes to whom, when, and in which project.");
+    const stop = () => running.close().then(() => process.exit(0));
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    return;
+  }
+  if (sub === "use") {
+    const [url] = positional(rest);
+    if (!url) throw new Error("usage: openmsg relay use <url>");
+    gateway.saveSettings({ relay: url });
+    console.log(`this owner sends through ${url}`);
+    return;
+  }
+  if (sub === undefined || sub === "show") {
+    const url = gateway.settings().relay;
+    console.log(url ? `relay ${url}` : "no relay. Run: openmsg relay use <url>");
+    return;
+  }
+  throw new Error("usage: openmsg relay start | relay use <url> | relay show");
+}
+
+function cmdOutbox(args) {
+  const rows = args.includes("--all") ? outbox.list() : outbox.waiting();
+  if (rows.length === 0) {
+    console.log(args.includes("--all") ? "the outbox is empty" : "no message waits for a receipt");
+    return;
+  }
+  for (const r of rows) {
+    console.log(`${r.messageId.slice(0, 8)}  ${String(r.state).padEnd(16)} to ${r.alias ?? r.to}  ${r.at}`);
+  }
+}
+
 async function cmdGateway(args) {
   const [sub = "start", ...rest] = args;
-  if (sub !== "start") throw new Error("usage: openmsg gateway start [--port <n>] [--host <h>]");
+  if (sub !== "start") throw new Error("usage: openmsg gateway start [--port <n>] [--host <h>] [--relay <url>]");
   const me = identity.load();
   const host = flag(rest, "host") ?? "127.0.0.1";
   const port = Number(flag(rest, "port") ?? 7801);
   const stamp = (line) => console.log(`${new Date().toISOString()} ${line}`);
   const running = await gateway.serve({ port, host, log: stamp });
   gateway.saveSettings({ host, port: running.port, endpoint: running.url });
+  const relayUrl = flag(rest, "relay") ?? gateway.settings().relay ?? null;
+  if (relayUrl) {
+    gateway.saveSettings({ relay: relayUrl });
+    await gateway.joinRelay(relayUrl, { log: stamp });
+  }
   console.log(`gateway of ${me.label} (${me.ownerId}) listens on ${running.url}`);
   const rows = published.list();
   if (rows.length === 0) console.log("nothing is published. Run: openmsg publish <agent>");
@@ -512,6 +639,8 @@ try {
     console.log(JSON.stringify(out));
   }
   else if (cmd === "gateway") await cmdGateway(args);
+  else if (cmd === "relay") await cmdRelay(args);
+  else if (cmd === "outbox") cmdOutbox(args);
   else if (cmd === "publish") await cmdPublish(args);
   else if (cmd === "unpublish") cmdUnpublish(args);
   else if (cmd === "permit") cmdPermit(args);
