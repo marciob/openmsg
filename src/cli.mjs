@@ -15,6 +15,7 @@ const USAGE = `openmsg — messages between AI coding agents
 
   openmsg list                      show the agents that run now
   openmsg send <agent> <text>       send a message to an agent
+     [--reply-to <message-id>]      keep the conversation of that message
   openmsg inbox [--json] [--all]    show the messages for this agent
   openmsg whoami                    show how this agent is addressed
   openmsg install                   let every agent on this machine answer messages
@@ -38,13 +39,28 @@ async function cmdList() {
   }
 }
 
-async function cmdSend(target, text) {
-  if (!target || !text) throw new Error('usage: openmsg send <agent> "<text>"');
+async function cmdSend(target, text, replyTo = null) {
+  if (!target || !text) throw new Error('usage: openmsg send <agent> "<text>" [--reply-to <message-id>]');
   const to = await findAgent(target);
   const from = await self();
-  const message = createMessage({ from, to, text });
-  message.openmsg.hops = [address(from)];
-  if (message.openmsg.hops.length > MAX_HOPS) throw new Error("hop limit reached");
+  // A reply keeps the conversation of the message that it answers, and it adds
+  // this agent to the chain of hops.
+  const answered = replyTo ? mailbox.find(from, replyTo) : null;
+  if (replyTo && !answered) throw new Error(`no message ${replyTo} in the mailbox of ${address(from)}`);
+  const message = createMessage({
+    from,
+    to,
+    text,
+    contextId: answered?.contextId,
+    replyTo: replyTo ?? null,
+  });
+  message.openmsg.hops = [...(answered?.openmsg?.hops ?? []), address(from)];
+  if (message.openmsg.hops.length > MAX_HOPS) {
+    throw new Error(
+      `hop limit reached: this conversation already passed through ${message.openmsg.hops.length - 1} agents. ` +
+        "Tell your user instead.",
+    );
+  }
 
   let result;
   if (to.vendor === "claude") {
@@ -97,7 +113,12 @@ function commandName() {
 const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === "list") await cmdList();
-  else if (cmd === "send") await cmdSend(args[0], args.slice(1).join(" "));
+  else if (cmd === "send") {
+    const flag = args.indexOf("--reply-to");
+    const replyTo = flag === -1 ? null : args[flag + 1];
+    const rest = flag === -1 ? args : [...args.slice(0, flag), ...args.slice(flag + 2)];
+    await cmdSend(rest[0], rest.slice(1).join(" "), replyTo);
+  }
   else if (cmd === "inbox") await cmdInbox(args);
   else if (cmd === "install") {
     const cliPath = commandName();

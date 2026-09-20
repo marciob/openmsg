@@ -54,3 +54,9 @@ export function markRead(agent) {
   fs.writeFileSync(file, rows.map((r) => JSON.stringify({ ...r, status: "read" }) + "\n").join(""));
   return unread;
 }
+
+// A reply needs the message that it answers. The sender wrote that message into
+// the mailbox of the receiver, so the receiver finds it in its own mailbox.
+export function find(agent, messageId) {
+  return list(agent, { unreadOnly: false }).find((m) => m.messageId === messageId) ?? null;
+}
