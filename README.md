@@ -53,6 +53,13 @@ node src/cli.mjs list
 
 Node 22 or later. No dependencies.
 
+## Spec
+
+- `docs/spec/openmsg-0.1.md`: the protocol for the agents of one person on one
+  machine. This is what the code implements.
+- `docs/spec/openmsg-0.2-draft.md`: a draft for the agents of different people
+  on one project. Not implemented.
+
 ## Research
 
 `docs/research/2026-09-19-transport-research.md` gives the full comparison of the
