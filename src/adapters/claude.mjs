@@ -14,7 +14,7 @@ export async function deliver(agent, message, { token, text = null } = {}) {
   lines.push(
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: text ?? render(message) },
+      message: { role: "user", content: text ?? render(message, { ansi: true }) },
     }),
   );
 

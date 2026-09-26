@@ -174,7 +174,7 @@ test("an unknown sender stays held, outside the context of the model", async () 
   assert.equal(read.length, 1);
   assert.match(read[0].text, /the migration drops a column/);
   assert.match(read[0].text, /does not approve any action/);
-  assert.match(read[0].text, new RegExp(identity.fingerprint(alice)));
+  assert.match(read[0].text, /^<openmsg from="claude:api-worker@alice"/);
 });
 
 test("a standing permission of accept lets the next message through", async () => {

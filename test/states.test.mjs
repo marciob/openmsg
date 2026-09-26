@@ -101,7 +101,7 @@ test("a message reaches the agent, and only an event of the agent acknowledges i
   assert.equal(out.status, "adapter-accepted");
   assert.equal(delivered.length, 1);
   // The text tells the agent how to say that it read the message.
-  assert.match(delivered[0], /openmsg ack [0-9a-f-]{36}/);
+  assert.match(delivered[0], /openmsg ack [0-9a-f]{8}/);
   assert.match(delivered[0], /--reply-to/);
 
   const row = as(BOB, () => inbound.find(wire.messageId));

@@ -69,6 +69,12 @@ export function markRead(agent, messageIds) {
 
 // A reply needs the message that it answers. The sender wrote that message into
 // the mailbox of the receiver, so the receiver finds it in its own mailbox.
+// The text for the model gives a short id, so a prefix is enough.
 export function find(agent, messageId) {
-  return list(agent, { unreadOnly: false }).find((m) => m.messageId === messageId) ?? null;
+  const rows = list(agent, { unreadOnly: false });
+  const exact = rows.find((m) => m.messageId === messageId);
+  if (exact) return exact;
+  const matches = rows.filter((m) => m.messageId.startsWith(messageId));
+  if (matches.length > 1) throw new Error(`"${messageId}" names ${matches.length} messages. Use more characters.`);
+  return matches[0] ?? null;
 }

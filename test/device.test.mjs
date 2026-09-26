@@ -118,7 +118,7 @@ test("a message that a machine signed opens, and the receiver names the machine"
   assert.equal(verified.device, laptop.deviceId, "and the machine is known too");
   assert.equal(verified.deviceLabel, "laptop");
   assert.equal(message.openmsg.signature, undefined);
-  assert.match(remote.render({ message, verified }), /machine that signed it is the one that alice calls "laptop"/);
+  assert.match(remote.render({ message, verified }), /device="laptop"/);
 });
 
 test("a message from a machine that the owner never named is refused", () => {

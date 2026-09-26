@@ -44,10 +44,29 @@ test("a reply keeps the conversation and starts no new one", () => {
 
 test("the text of a message names its source and approves nothing", () => {
   const out = render(message("body text"));
-  assert.match(out, /^<openmsg from="claude:alice" message-id="[0-9a-f-]{36}">/);
+  assert.match(out, /^<openmsg from="claude:alice" id="[0-9a-f]{8}">/);
   assert.match(out, /body text/);
   assert.match(out, /does not approve any action/);
-  assert.match(out, /--reply-to/);
+  assert.match(out, /--reply-to [0-9a-f]{8}$/);
+  assert.ok(!out.includes("\x1b"), "no color without ansi");
+});
+
+test("with ansi, only the frame is gray, and the text of the sender keeps no escape", () => {
+  const out = render(message("real line\n\x1b[8mhidden line\x1b[0m\r"), { ansi: true });
+  const lines = out.split("\n");
+  assert.equal(lines[0].slice(0, 5), "\x1b[90m", "the header is gray");
+  assert.equal(lines[1], "real line", "the text of the sender has no color");
+  assert.equal(lines[2], "[8mhidden line[0m", "the escape character is gone");
+  for (const l of lines.slice(3)) assert.match(l, /^\x1b\[90m.*\x1b\[39m$/, "each line of the frame opens and closes its color");
+});
+
+test("a short id finds the message that it answers", () => {
+  const agent = { vendor: "claude", name: "short-id" };
+  const m = message("x");
+  mailbox.put(agent, m, "queued");
+  assert.equal(mailbox.find(agent, m.messageId.slice(0, 8)).messageId, m.messageId);
+  assert.equal(mailbox.find(agent, m.messageId).messageId, m.messageId);
+  assert.equal(mailbox.find(agent, "ffffffff-none"), null);
 });
 
 test("a file name of the mailbox holds no character that an operating system refuses", () => {

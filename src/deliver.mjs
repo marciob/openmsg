@@ -5,6 +5,12 @@ import * as claude from "./adapters/claude.mjs";
 import * as opencode from "./adapters/opencode.mjs";
 import * as codex from "./adapters/codex.mjs";
 
+// Claude Code shows the color of an escape sequence in the text of a message.
+// Codex removes each escape sequence, and the other vendors are not tested.
+export function showsColor(vendor) {
+  return vendor === "claude";
+}
+
 // `text` is the text that the model reads. The adapters make it from the
 // envelope of 0.1 when the caller gives none.
 export async function deliverLocal(agent, message, { text = null } = {}) {
