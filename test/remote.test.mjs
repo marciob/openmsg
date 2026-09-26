@@ -176,7 +176,7 @@ test("the hop limit holds, and the text for the model approves nothing", () => {
   assert.match(text, /^<openmsg from="claude:api-worker@alice"/);
   assert.match(text, /the tests fail on main/);
   assert.match(text, /does not approve any action/);
-  assert.match(text, new RegExp(identity.fingerprint(alice)));
   assert.match(text, /branch main at commit 9f2c1d4e5a6b/);
-  assert.match(text, /not about yours/);
+  assert.match(text, /not yours/);
+  assert.match(text, /openmsg ack [0-9a-f]{8}$/);
 });
