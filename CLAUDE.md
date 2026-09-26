@@ -106,13 +106,11 @@ including automatic replies. OpenCode: delivery tested, and a reply needs a
 model account. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.2.0. On `github.com/marciob/openmsg`: the code of 0.3, the
+On npm: version 0.3.0. On `github.com/marciob/openmsg`: the code of 0.3, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
 
-`package.json` says 0.3.0, and npm still serves 0.2.0. The last step of that
-release needs a terminal, and the section "How a release goes" says why.
 Version 0.3.0 fixes the WebSocket handshake, so a gateway of 0.2.0 and a relay
 of 0.3.0 do not connect.
 
