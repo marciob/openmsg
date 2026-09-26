@@ -123,10 +123,15 @@ Rules:
    exception. It removes each control character except the newline and the
    tab. An escape sequence can hide a line from the person at the terminal
    while the model reads that line.
-5. An adapter can show the text outside the block in gray, if its terminal
-   shows color from the text. The text of the sender stays in the normal
-   color. The Claude Code adapter does this. The Codex terminal removes
-   each escape sequence, so the Codex adapter sends no color.
+5. An adapter can show the frame and the text of the sender apart, if its
+   vendor lets it. The words that the model reads stay the same.
+   - Claude Code shows the color of an escape sequence. Its adapter makes
+     each line of the frame gray. The model also reads these sequences.
+   - Codex removes each escape sequence. Its adapter marks the text of the
+     sender as a text element, through the socket of the Codex daemon.
+     Codex draws that text in its accent color. A text element is only for
+     the display, and the model never reads it. If the socket fails before
+     the message leaves, the adapter uses `codex queue`, with no color.
 
 ## 6. Discovery
 
