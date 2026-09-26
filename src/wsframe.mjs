@@ -14,7 +14,7 @@ import net from "node:net";
 import tls from "node:tls";
 import { EventEmitter } from "node:events";
 
-const GUID = "258EAFA5-E914-47DA-95CA-5AB0DC85B11F";
+const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 export const MAX_MESSAGE = 1024 * 1024;
 
 const OP = { continuation: 0x0, text: 0x1, binary: 0x2, close: 0x8, ping: 0x9, pong: 0xa };
@@ -223,7 +223,9 @@ function parse(buffer, expectMask) {
 // handshake fails.
 // `tlsOptions` reaches node:tls. A team with its own certificate passes `ca`,
 // and then the client trusts that certificate and no other one.
-export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {} } = {}) {
+// `socketPath` opens a Unix socket in place of TCP, as the app-server of Codex
+// needs. The URL then gives only the path and the Host header.
+export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {}, socketPath = null } = {}) {
   const address = new URL(url);
   const secure = address.protocol === "wss:";
   const port = Number(address.port || (secure ? 443 : 80));
@@ -233,10 +235,12 @@ export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {} } = {}) 
   return new Promise((resolve, reject) => {
     const socket = secure
       ? tls.connect({ host: address.hostname, port, servername: address.hostname, ...tlsOptions })
-      : net.createConnection({ host: address.hostname, port });
+      : socketPath
+        ? net.createConnection(socketPath)
+        : net.createConnection({ host: address.hostname, port });
     const fail = (e) => {
       socket.destroy();
-      reject(new Error(`the relay at ${url} did not answer: ${e.message}`));
+      reject(new Error(`the server at ${socketPath ?? url} did not answer: ${e.message}`));
     };
     const timer = setTimeout(() => fail(new Error("timeout")), timeoutMs);
     socket.once("error", fail);
@@ -264,13 +268,13 @@ export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {} } = {}) 
       socket.off("error", fail);
       if (!/^HTTP\/1\.1 101/.test(headers)) {
         socket.destroy();
-        reject(new Error(`the relay at ${url} answered "${headers.split("\r\n")[0]}"`));
+        reject(new Error(`the server at ${socketPath ?? url} answered "${headers.split("\r\n")[0]}"`));
         return;
       }
       const given = headers.match(/sec-websocket-accept: (.+)/i)?.[1]?.trim();
       if (given !== accept) {
         socket.destroy();
-        reject(new Error(`the relay at ${url} answered with a wrong handshake value`));
+        reject(new Error(`the server at ${socketPath ?? url} answered with a wrong handshake value`));
         return;
       }
       const connection = new Connection(socket, "client");

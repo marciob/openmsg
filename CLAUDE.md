@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 88 of them
+node --test                      # the tests, 93 of them
 npm publish --access public      # a release. See "How a release goes" below.
 ```
 
@@ -67,8 +67,12 @@ Each vendor has its own way in:
 
 - **Claude Code**: a Unix socket for each session. Two lines: an auth line, then
   `{"type":"user","message":{"role":"user","content":"..."}}`.
-- **Codex**: `codex queue --thread <id> --message <text>`. The shared daemon must
-  run before the user starts Codex, and the session needs one turn first.
+- **Codex**: `thread/queue/add` on the socket of the shared daemon
+  (`~/.codex/app-server-control/app-server-control.sock`, WebSocket and
+  JSON-RPC). The text of the sender goes as a text element, so Codex shows it
+  in its accent color. If the socket fails before the message leaves, the
+  adapter runs `codex queue --thread <id> --message <text>`. The shared daemon
+  must run before the user starts Codex, and the session needs one turn first.
 - **OpenCode**: `POST /session/{id}/prompt_async` on its local HTTP server.
 - **Cursor and Gemini**: no way to wake an idle session. A hook reads the
   mailbox at the end of each turn.
@@ -86,7 +90,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. Eighty-eight tests in `test/` cover the
+4. Test what needs no account. Ninety-three tests in `test/` cover the
    envelope, the mailbox, the hop limit, both hook shapes, and every part of
    0.2. Two tests need `openssl` for a certificate, and they say so when it
    is not there. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of

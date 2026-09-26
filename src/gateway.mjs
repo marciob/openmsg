@@ -25,7 +25,7 @@ import * as published from "./published.mjs";
 import * as inbound from "./inbound.mjs";
 import * as remote from "./remote.mjs";
 import { agentsOfVendor } from "./registry.mjs";
-import { deliverLocal, showsColor } from "./deliver.mjs";
+import { deliverLocal } from "./deliver.mjs";
 import * as outbox from "./outbox.mjs";
 import * as relaylink from "./relaylink.mjs";
 import * as limits from "./limits.mjs";
@@ -259,7 +259,7 @@ export async function release(record, { deliver = deliverLocal, now = Date.now()
 
   let result;
   try {
-    result = await deliver(agent, record.message, { text: remote.render(record, { ansi: showsColor(agent.vendor) }) });
+    result = await deliver(agent, record.message, { text: remote.render(record), parts: remote.layoutOf(record) });
   } catch (e) {
     return stop("adapter-failed", e.message);
   }
