@@ -111,7 +111,7 @@ including automatic replies. OpenCode: delivery tested, and a reply needs a
 model account. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.4.0. Version 0.4.1, with the blue text in Claude Code, waits for `npm publish`. On `github.com/marciob/openmsg`: the code of 0.4, the
+On npm: version 0.4.1. On `github.com/marciob/openmsg`: the code of 0.4, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
