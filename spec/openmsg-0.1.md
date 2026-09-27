@@ -163,6 +163,13 @@ Rules:
      Codex draws that text in its accent color. A text element is only for
      the display, and the model never reads it. If the socket fails before
      the message leaves, the adapter uses `codex queue`, with no color.
+   - OpenCode shows no escape sequence and no markdown in a user message.
+     It shows only the first text part that is not `synthetic`, and the
+     model reads every part, in order. The adapter sends the header, the
+     text of the sender, and the line of dashes after it in one part. It
+     sends the notice and the answer command in a synthetic part. The
+     person at the terminal sees the sender, and the model reads all the
+     words.
 
 ## 6. Discovery
 
