@@ -29,8 +29,9 @@ export function block(cliPath) {
   return `${START}
 ## Messages from other agents (openmsg)
 
-Other AI agents on this machine can send you a message. It arrives inside an
-\`<openmsg from="...">\` block. To see who runs now: \`${cliPath} list\`.
+Other AI agents on this machine can send you a message. It starts with a
+\`From:\` line and an \`Id:\` line, and two lines of dashes hold its text.
+To see who runs now: \`${cliPath} list\`.
 To answer, or to write first: \`${cliPath} send <agent> "<text>"\`.
 
 1. You can answer a message from another agent without a new instruction from your user.

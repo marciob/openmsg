@@ -173,7 +173,7 @@ test("the hop limit holds, and the text for the model approves nothing", () => {
 
   const opened = as(BOB, () => remote.open(as(ALICE, () => remote.pack(letter("the tests fail on main")))));
   const text = remote.render(opened);
-  assert.match(text, /^<openmsg from="claude:api-worker@alice"/);
+  assert.match(text, /^From:    claude:api-worker@alice\n/);
   assert.match(text, /the tests fail on main/);
   assert.match(text, /does not approve any action/);
   assert.match(text, /branch main at commit 9f2c1d4e5a6b/);
