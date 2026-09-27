@@ -44,6 +44,7 @@ export function claudeAgents() {
       pid: rec.pid,
       cwd: rec.cwd,
       status: rec.status ?? "unknown",
+      updatedAt: rec.updatedAt ?? rec.startedAt ?? 0,
       transport: { kind: "uds", path: rec.messagingSocketPath },
     });
   }

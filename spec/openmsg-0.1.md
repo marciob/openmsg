@@ -17,6 +17,7 @@ In scope:
 - Agents from different vendors, for example Claude Code and Codex.
 - Agents on one machine, under one operating-system user.
 - Discovery of the sessions that run now.
+- A message to a project directory, that waits for the next session there.
 
 Not in scope for version 0.1:
 
@@ -60,6 +61,25 @@ Rules:
    the message and must show the addresses that match.
 4. An implementation must accept a full session id in place of the name.
 
+### 3.1 The address of a project
+
+A sender can address a directory in place of a session:
+
+```
+project:<directory>
+```
+
+A program with no session, such as a scheduled check, uses this address. The
+message waits on disk until a session in that directory takes it. Section 11.2
+gives the rules.
+
+1. The implementation resolves the directory to its real path before it keeps
+   the message. A directory that does not exist is an error.
+2. A session is in the project when its working directory is that directory or
+   a directory inside it.
+3. The address names no vendor. A session of any vendor with an entry point for
+   a project message can take it.
+
 ## 4. The envelope
 
 The envelope uses the field names of the A2A `Message` object. The extra fields
@@ -95,6 +115,7 @@ of openmsg stay in one object, under the key `openmsg`.
 | `openmsg.from`, `openmsg.to` | The vendor, the session id, and the name. |
 | `openmsg.hops` | The addresses that the message passed through, oldest first. |
 | `openmsg.replyTo` | The `messageId` that this message answers, or `null`. |
+| `openmsg.key` | Optional. For a project message only. See section 11.2. |
 
 An implementation must keep a field that it does not know, and must pass it on.
 
@@ -118,7 +139,9 @@ Rules:
 
 1. The first line must name the sender. The model must always see who wrote.
 2. The text after the block must state that the message approves nothing.
-3. The last line must give the exact command for an answer.
+3. The last line must give the exact command for an answer. If the sender is
+   not a session, such as a script, the last line must say that the sender
+   takes no answer.
 4. An implementation must not change the text of the sender, with one
    exception. It removes each control character except the newline and the
    tab. An escape sequence can hide a line from the person at the terminal
@@ -254,6 +277,49 @@ With `--json`, the output is one object:
 A reader marks only the messages in `messages` as read. A refused message keeps
 its state, so the next read reports it again.
 
+### 11.2 The project box
+
+The project box keeps the messages to a `project:` address. It is separate from
+the mailbox of a session.
+
+- One directory for each project, in `~/.openmsg/projects/`. The name encodes
+  the real path of the project, with the rule of the mailbox.
+- One file for each message that waits.
+- A message that a session took moves to the `taken/` directory of the project.
+  A move is atomic, so only one session takes one message. The implementation
+  also writes the message to the mailbox of that session, with the status
+  `delivered`.
+
+Rules:
+
+1. A message with a `key` replaces the waiting message with the same key. A
+   daily check therefore keeps one message, not one for each day.
+2. `openmsg clear project:<directory> --key <key>` removes the waiting message
+   with that key. A check that finds no fault runs it.
+3. After the implementation keeps the message, it looks for a live Claude Code
+   session in the project. It reads only the session records of Claude Code, so
+   the send stays fast. If more than one session matches, the session with the
+   most recent activity takes the message.
+4. If no live session takes the message, it waits. A hook at the start of the
+   next session in the project delivers it. Cursor CLI and Gemini CLI also
+   take it at the end of a turn.
+5. A message that waited for 30 days expires. The implementation removes it at
+   the next read.
+6. A hook must stay fast when no message waits. It reads one directory for each
+   project, and nothing more.
+
+The entry points for a project message:
+
+| Vendor | Entry point |
+|---|---|
+| Claude Code | The inbox socket of a live session, or the `SessionStart` hook |
+| Cursor CLI | The `sessionStart` and `stop` hooks |
+| Gemini CLI | The `SessionStart` and `AfterAgent` hooks |
+| Codex, OpenCode | None yet |
+
+`openmsg install --hooks` writes the hooks. For Claude Code, it writes a
+`SessionStart` hook into `~/.claude/settings.json`.
+
 ## 12. Identity of the sender
 
 An implementation finds the sender in this order:
@@ -289,6 +355,7 @@ State of this implementation, 2026-09-19:
 | Cursor and Gemini adapters | Written as a hook, tested with fixtures. A live test needs an account |
 | `replyTo` and the `contextId` of a reply | Done. `openmsg send ... --reply-to <id>` keeps the conversation. |
 | Hop limit | Done. A reply adds one hop, and the chain stops after eight. |
+| Project box of section 11.2 | Done. Live push to Claude Code tested. The `SessionStart` hook tested in a new Claude Code session |
 | Status `delivered` and `read` in the mailbox | **Partly done.** The sender writes `sent` only. |
 
 ## 14. Version
