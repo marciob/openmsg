@@ -44,7 +44,7 @@ test("a reply keeps the conversation and starts no new one", () => {
 
 test("the text of a message names its source and approves nothing", () => {
   const out = render(message("body text"));
-  assert.match(out, /^<openmsg from="claude:alice" id="[0-9a-f]{8}">/);
+  assert.match(out, /^From: claude:alice\nId:   [0-9a-f]{8}\n─{32}\n/);
   assert.match(out, /body text/);
   assert.match(out, /does not approve any action/);
   assert.match(out, /--reply-to [0-9a-f]{8}$/);
@@ -54,10 +54,10 @@ test("the text of a message names its source and approves nothing", () => {
 test("with ansi, the frame is gray, the body is blue, and the text of the sender keeps no escape", () => {
   const out = render(message("real line\n\x1b[8mhidden line\x1b[0m\r"), { ansi: true });
   const lines = out.split("\n");
-  assert.equal(lines[0].slice(0, 5), "\x1b[90m", "the header is gray");
-  assert.equal(lines[1], "\x1b[34mreal line\x1b[39m", "each line of the body is blue");
-  assert.equal(lines[2], "\x1b[34m[8mhidden line[0m\x1b[39m", "the escape character of the sender is gone");
-  for (const l of lines.slice(3)) assert.match(l, /^\x1b\[90m.*\x1b\[39m$/, "each line of the frame opens and closes its color");
+  for (const l of lines.slice(0, 3)) assert.match(l, /^\x1b\[90m.*\x1b\[39m$/, "each line of the header is gray");
+  assert.equal(lines[3], "\x1b[34mreal line\x1b[39m", "each line of the body is blue");
+  assert.equal(lines[4], "\x1b[34m[8mhidden line[0m\x1b[39m", "the escape character of the sender is gone");
+  for (const l of lines.slice(5)) assert.match(l, /^\x1b\[90m.*\x1b\[39m$/, "each line of the frame opens and closes its color");
 });
 
 test("a short id finds the message that it answers", () => {
