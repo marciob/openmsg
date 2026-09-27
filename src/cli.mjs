@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // openmsg: send a message from one AI coding agent to another.
-import { allAgents, findAgent, self } from "./registry.mjs";
-import { createMessage, address, MAX_HOPS } from "./envelope.mjs";
+import { allAgents, findAgent, self, claudeAgents } from "./registry.mjs";
+import { createMessage, address, textOf, MAX_HOPS } from "./envelope.mjs";
 import * as mailbox from "./mailbox.mjs";
+import * as projectbox from "./projectbox.mjs";
 import { runHook } from "./hook.mjs";
 import { installHooks, uninstallHooks } from "./hookinstall.mjs";
 import { installGlobal, installProject, uninstall, GLOBAL_TARGETS, PROJECT_FILES } from "./install.mjs";
@@ -30,11 +31,15 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg list                      show the agents that run now
   openmsg send <agent> <text>       send a message to an agent
      [--reply-to <message-id>]      keep the conversation of that message
+  openmsg send project:<dir> <text> the next session in that directory takes it
+     [--key <k>]                    replace the waiting message with that key
+  openmsg clear project:<dir> --key <k>   remove the waiting message with that key
+  openmsg waiting                   the project messages that wait for a session
   openmsg inbox [--json] [--all]    show the messages for this agent
   openmsg whoami                    show how this agent is addressed
-  openmsg hook <vendor>             run inside a hook of cursor or gemini
+  openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
-  openmsg install --hooks           add the hook for cursor and gemini
+  openmsg install --hooks           add the hooks for claude, cursor, and gemini
   openmsg install --project [dir]   the same, for one project only
   openmsg uninstall [--project]     remove what install wrote
 
@@ -96,6 +101,7 @@ async function cmdSend(target, text, replyTo = null, args = []) {
   if (!target || !text) throw new Error('usage: openmsg send <agent> "<text>" [--reply-to <message-id>]');
   // An alias with an owner, such as "claude:api-worker@alice", belongs to
   // another person. That message goes through the two gateways.
+  if (projectbox.isProjectAddress(target)) return cmdSendProject(target, text, replyTo, args);
   if (target.includes("@")) return cmdSendRemote(target, text, replyTo, args);
   const from = await self();
   // A reply keeps the conversation of the message that it answers, and it adds
@@ -148,6 +154,68 @@ async function cmdSend(target, text, replyTo = null, args = []) {
     ? `sent to ${address(to)} over ${result.transport}`
     : `queued for ${address(to)} in the mailbox. That agent reads it at the end of its next turn`;
   console.log(`${how} (${message.messageId})`);
+}
+
+// The sender of a project message. A program names itself with OPENMSG_SELF,
+// and openmsg does not look that name up: a lookup asks every vendor for its
+// sessions, and a scheduled check must stay small and fast.
+async function senderOfProjectMessage() {
+  const value = process.env.OPENMSG_SELF;
+  if (!value) return self();
+  const [vendor, ...rest] = value.includes(":") ? value.split(":") : ["shell", value];
+  const name = rest.join(":");
+  return { vendor, id: name, name, unresolved: true };
+}
+
+async function cmdSendProject(target, text, replyTo, args) {
+  if (replyTo) throw new Error("a project message is not a reply. Send it without --reply-to");
+  const dir = projectbox.dirOfAddress(target);
+  const from = await senderOfProjectMessage();
+  const to = { vendor: "project", id: dir, name: dir };
+  const message = createMessage({ from, to, text });
+  message.openmsg.hops = [address(from)];
+  const key = flag(args, "key");
+  if (key) message.openmsg.key = key;
+  projectbox.put(dir, message);
+
+  // Only the records of Claude Code, because they are files. The discovery of
+  // Codex and OpenCode runs lsof, and that costs seconds.
+  const live = claudeAgents()
+    .filter((a) => projectbox.sessionIsIn(a.cwd, dir))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const agent of live) {
+    const got = projectbox.takeMessage(dir, message);
+    if (!got) break;
+    try {
+      const result = await deliverLocal(agent, got.message);
+      mailbox.put(agent, got.message, "delivered");
+      console.log(`sent to ${address(agent)} over ${result.transport} (${message.messageId})`);
+      return;
+    } catch (e) {
+      projectbox.restore(dir, got);
+      console.error(`openmsg: ${address(agent)}: ${e.message}`);
+    }
+  }
+  console.log(`waits in ${dir}. The next session there takes it (${message.messageId})`);
+}
+
+function cmdClear(args) {
+  const [target] = positional(args, ["key"]);
+  const key = flag(args, "key");
+  if (!projectbox.isProjectAddress(target) || !key) throw new Error("usage: openmsg clear project:<dir> --key <key>");
+  const dir = projectbox.dirOfAddress(target);
+  console.log(projectbox.clear(dir, key) ? `removed "${key}" from ${dir}` : `no message "${key}" waits in ${dir}`);
+}
+
+function cmdWaiting() {
+  const rows = projectbox.all();
+  if (rows.length === 0) return console.log("no project message waits");
+  for (const { dir, messages } of rows) {
+    for (const m of messages) {
+      const key = m.openmsg.key ? ` [${m.openmsg.key}]` : "";
+      console.log(`${dir}${key} from ${address(m.openmsg.from)} at ${m.createdAt}\n${textOf(m)}\n`);
+    }
+  }
 }
 
 async function cmdInbox(args) {
@@ -831,10 +899,12 @@ const [cmd, ...args] = process.argv.slice(2);
 try {
   if (cmd === "list") await cmdList();
   else if (cmd === "send") {
-    const rest = positional(args, ["reply-to", "project"]);
+    const rest = positional(args, ["reply-to", "project", "key"]);
     await cmdSend(rest[0], rest.slice(1).join(" "), flag(args, "reply-to"), args);
   }
   else if (cmd === "inbox") await cmdInbox(args);
+  else if (cmd === "clear") cmdClear(args);
+  else if (cmd === "waiting") cmdWaiting();
   else if (cmd === "install") {
     const cliPath = commandName();
     const rows = args.includes("--hooks")

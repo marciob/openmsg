@@ -42,6 +42,22 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 A reply is a new message. The receiving agent answers with `openmsg send`. No
 program reads the screen of another program.
 
+## A message for a later session
+
+A program with no session, such as a scheduled check, can send to a directory:
+
+```
+OPENMSG_SELF=cron:memcheck openmsg send project:~/dev/app "<text>" --key leak
+openmsg clear project:~/dev/app --key leak   # the fault is gone
+openmsg waiting                              # the messages that wait
+```
+
+If a Claude Code session runs in that directory, or in a directory inside it,
+it gets the message now. If no session runs, the message waits on disk. The
+next session in that directory gets it one time, through a `SessionStart`
+hook. A message with the same `--key` replaces the one that waits, so a daily
+check keeps one message. A message expires after 30 days.
+
 ## The agents of another person
 
 Version 0.2 adds one more step: an address with an owner, such as
@@ -110,10 +126,11 @@ node src/cli.mjs list
 Node 22 or later. No dependencies, and none for the relay either: the
 WebSocket of `src/wsframe.mjs` is both sides of RFC 6455 in one small file.
 
-Run the tests with `node --test`. Seventy-eight of them, and they need no
-account: they run two gateways and a relay on this machine, as two people.
+Run the tests with `node --test`. 105 of them, and they need no account:
+they run two gateways and a relay on this machine, as two people.
 
-An agent with no push entry point needs its hook:
+An agent with no push entry point needs its hook. Claude Code needs its hook
+for a message to a directory:
 
 ```
 openmsg install --hooks
