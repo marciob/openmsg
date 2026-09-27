@@ -51,6 +51,16 @@ export function claudeAgents() {
   return out;
 }
 
+// The pids of the programs with this exact name. On macOS, pgrep leaves out
+// the parents of its own process, so an agent that runs this command does not
+// find itself. `-a` puts them back. Linux pgrep leaves out only itself, and
+// there `-a` means another thing.
+async function pgrep(name) {
+  const args = process.platform === "darwin" ? ["-a", "-x", name] : ["-x", name];
+  const { stdout } = await run("pgrep", args);
+  return stdout.trim().split("\n").filter(Boolean);
+}
+
 // OpenCode runs an HTTP server for each user interface. The port is in the
 // listening sockets of the process.
 export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
@@ -59,8 +69,7 @@ export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
     // `-x` matches the name of the program. `-f` matches the whole command
     // line, and that also matches a program that only holds the word in its
     // environment.
-    const { stdout } = await run("pgrep", ["-x", "opencode"]);
-    pids = stdout.trim().split("\n").filter(Boolean);
+    pids = await pgrep("opencode");
   } catch {
     return [];
   }
@@ -117,8 +126,7 @@ export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
 export async function codexAgents() {
   let pids = [];
   try {
-    const { stdout } = await run("pgrep", ["-x", "codex"]);
-    pids = stdout.trim().split("\n").filter(Boolean);
+    pids = await pgrep("codex");
   } catch {
     return [];
   }
@@ -268,6 +276,41 @@ async function ancestors(pid, depth = 8) {
   return out;
 }
 
+// The agents that can run a command of their own. Each one is a sender apart
+// from the Claude session that started it.
+const OTHER_AGENTS = new Set(["codex", "opencode", "cursor-agent"]);
+
+// A program that a Claude session starts, such as an OpenCode server, gets the
+// environment of that session, with its socket. That socket names the sender
+// only if the session is a parent of this command, and no other agent runs
+// between the two. One `ps` call gives the whole tree, so the walk has no
+// limit of depth.
+export async function runsUnder(sessionPid) {
+  let table;
+  try {
+    const { stdout } = await run("ps", ["-A", "-o", "pid=,ppid=,comm="]);
+    table = new Map(
+      stdout.trim().split("\n").map((l) => {
+        const [pid, ppid, ...comm] = l.trim().split(/\s+/);
+        return [Number(pid), { ppid: Number(ppid), name: path.basename(comm.join(" ")) }];
+      }),
+    );
+  } catch {
+    table = new Map();
+  }
+  // In a sandbox, `ps` can give nothing. Then the socket is the only evidence.
+  if (!table.has(process.ppid)) return true;
+  const seen = new Set();
+  for (let pid = process.ppid; pid > 1 && !seen.has(pid); ) {
+    if (pid === sessionPid) return true;
+    seen.add(pid);
+    const p = table.get(pid);
+    if (!p || OTHER_AGENTS.has(p.name)) return false;
+    pid = p.ppid;
+  }
+  return false;
+}
+
 export async function self() {
   // OPENMSG_SELF can hold an alias, such as "codex:openmsg-33ce". An alias is
   // not a session id, so openmsg looks the session up. Without this step, a
@@ -291,7 +334,7 @@ export async function self() {
   }
   if (process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
     const me = claudeAgents().find((a) => a.transport.path === process.env.CLAUDE_CODE_MESSAGING_SOCKET);
-    if (me) return me;
+    if (me && (await runsUnder(me.pid))) return me;
   }
   const line = await ancestors(process.ppid);
   let [codex, opencode] = await Promise.all([codexAgents(), opencodeAgents()]);

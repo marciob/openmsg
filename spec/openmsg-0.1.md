@@ -342,8 +342,13 @@ An implementation finds the sender in this order:
 1. The variable `OPENMSG_SELF`, when the user sets it.
 2. The variable of the vendor. Claude Code gives
    `CLAUDE_CODE_MESSAGING_SOCKET`. Codex gives `CODEX_THREAD_ID`.
+   A program that a Claude session starts, such as an OpenCode server, gets
+   this socket in its environment too. The socket names the sender only if
+   the Claude session is a parent process of the command, and no other agent
+   runs between the two.
 3. The process tree. If a parent process is an agent, the implementation uses
-   the session of that process.
+   the session of that process. On macOS, `pgrep` leaves out the parents of
+   its own process, so the implementation gives it `-a`.
 4. The working directory. If one session runs in this directory, and the vendor
    is known, the implementation uses that session.
 

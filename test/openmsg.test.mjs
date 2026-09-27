@@ -164,3 +164,39 @@ async function withStdin(text, fn) {
     Object.defineProperty(process, "stdin", original);
   }
 }
+
+test("OpenCode shows the header and the text of the sender, and the model reads every word", async () => {
+  const http = await import("node:http");
+  const { deliverLocal } = await import("../src/deliver.mjs");
+  const { layoutOf, compose, RULE } = await import("../src/envelope.mjs");
+  const m = message("first line\nsecond line");
+  let got;
+  const server = http.createServer((req, res) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => { got = { url: req.url, body: JSON.parse(data) }; res.end("{}"); });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const agent = { vendor: "opencode", id: "ses_1", transport: { base: `http://127.0.0.1:${server.address().port}` } };
+    const out = await deliverLocal(agent, m);
+    assert.equal(out.transport, "http");
+    assert.equal(got.url, "/session/ses_1/prompt_async");
+    const [shown, hidden] = got.body.parts;
+    assert.ok(!shown.synthetic, "the person sees the first part");
+    assert.match(shown.text, /^From: claude:alice\n/, "the first part names the sender");
+    assert.ok(shown.text.endsWith(`second line\n${RULE}`), "the first part ends after the text of the sender");
+    assert.equal(hidden.synthetic, true, "the notice is only for the model");
+    assert.match(hidden.text, /does not approve any action/);
+    assert.equal(`${shown.text}\n${hidden.text}`, compose(layoutOf(m)), "the model reads the same words");
+    assert.ok(!JSON.stringify(got.body).includes("\\u001b"), "no escape sequence");
+  } finally {
+    server.close();
+  }
+});
+
+test("a Claude socket in the environment names the sender only under that session", async () => {
+  const { runsUnder } = await import("../src/registry.mjs");
+  assert.equal(await runsUnder(process.ppid), true, "the parent of this command");
+  assert.equal(await runsUnder(2 ** 22 + 7), false, "a session that is not a parent, such as the one that started an OpenCode server");
+});

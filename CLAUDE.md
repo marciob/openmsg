@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 105 of them
+node --test                      # the tests, 107 of them
 npm publish --access public      # a release. See "How a release goes" below.
 ```
 
@@ -91,7 +91,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. 105 tests in `test/` cover the envelope, the
+4. Test what needs no account. 107 tests in `test/` cover the envelope, the
    mailbox, the project box, the hop limit, the three hook shapes, and every
    part of 0.2. Two tests need `openssl` for a certificate, and they say so when it
    is not there. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
@@ -107,8 +107,7 @@ Each vendor has its own way in:
 ## State, 2026-09-20
 
 Works and tested with live sessions: Claude Code both ways, Codex both ways,
-including automatic replies. OpenCode: delivery tested, and a reply needs a
-model account. Cursor and Gemini: written, tested with fixtures only, because a
+including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
 On npm: version 0.4.1. Version 0.4.2, with the e-mail frame, waits for `npm publish`. On `github.com/marciob/openmsg`: the code of 0.4, the
