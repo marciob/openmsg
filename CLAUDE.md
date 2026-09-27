@@ -110,7 +110,7 @@ Works and tested with live sessions: Claude Code both ways, Codex both ways,
 including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.4.3. Version 0.4.4, with the title, the age, and the note of each agent in `list`, waits for `npm publish`. On `github.com/marciob/openmsg`: the code of 0.4, the
+On npm: version 0.4.4. It shows the title, the age, and the note of each agent in `list`. On `github.com/marciob/openmsg`: the code of 0.4, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
