@@ -12,7 +12,8 @@ import { layoutOf, compose, bodyRange } from "./envelope.mjs";
 //   and the text of the sender is blue.
 //   Codex removes each escape sequence, but it draws a byte range in its accent
 //   color. The text of the sender gets that color, and the model never sees it.
-//   OpenCode gets the plain text. Its display is not tested.
+//   OpenCode shows no color. The person sees the header and the text of the
+//   sender, and the notice after them goes in a part that only the model reads.
 // `text` alone, with no layout, goes to the adapter as it is.
 export async function deliverLocal(agent, message, { text = null, parts = null } = {}) {
   if (!parts && !text) parts = layoutOf(message);
@@ -25,7 +26,7 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
       : undefined;
     return claude.deliver(agent, message, { token, text: parts ? compose(parts, { ansi: true }) : text });
   }
-  if (agent.vendor === "opencode") return opencode.deliver(agent, message, { text: plain });
+  if (agent.vendor === "opencode") return opencode.deliver(agent, message, parts ? { layout: parts } : { text });
   if (agent.vendor === "codex") return codex.deliver(agent, message, { text: plain, highlight: parts ? bodyRange(parts) : null });
   // An agent with no push entry point, such as Gemini CLI or Cursor CLI, reads
   // its mailbox at the end of a turn. The message waits there.
