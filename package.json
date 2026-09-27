@@ -1,6 +1,6 @@
 {
   "name": "openmsg",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Messages between AI coding agents of different vendors, on one machine or between two people, sealed end to end.",
   "type": "module",
   "bin": {
