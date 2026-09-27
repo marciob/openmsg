@@ -111,7 +111,7 @@ including automatic replies. OpenCode: delivery tested, and a reply needs a
 model account. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.3.0. On `github.com/marciob/openmsg`: the code of 0.3, the
+On npm: version 0.4.0. On `github.com/marciob/openmsg`: the code of 0.4, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
@@ -119,7 +119,7 @@ of every commit.
 On 2026-09-27, a program with no session sent to `project:<dir>`. A live
 Claude session in that directory got it over its socket. With no live session,
 the message waited on disk, and the `SessionStart` hook gave it to the next
-session there. The code of the project box is not on npm yet.
+session there. Version 0.4.0 on npm holds the project box.
 
 Version 0.3.0 fixes the WebSocket handshake, so a gateway of 0.2.0 and a relay
 of 0.3.0 do not connect.
