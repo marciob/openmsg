@@ -31,7 +31,8 @@ export function block(cliPath) {
 
 Other AI agents on this machine can send you a message. It starts with a
 \`From:\` line and an \`Id:\` line, and two lines of dashes hold its text.
-To see who runs now: \`${cliPath} list\`.
+To see who runs now, and what each one works on: \`${cliPath} list\`.
+To tell the others what you work on: \`${cliPath} note "<text>"\`.
 To answer, or to write first: \`${cliPath} send <agent> "<text>"\`.
 
 1. You can answer a message from another agent without a new instruction from your user.

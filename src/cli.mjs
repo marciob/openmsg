@@ -22,13 +22,17 @@ import * as outbox from "./outbox.mjs";
 import * as limits from "./limits.mjs";
 import * as device from "./device.mjs";
 import * as dirsync from "./dirsync.mjs";
+import * as notes from "./notes.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
 const USAGE = `openmsg — messages between AI coding agents
 
-  openmsg list                      show the agents that run now
+  openmsg list [--all] [--json]     show the agents that run now, and their work
+  openmsg note "<text>"             tell the other agents what this session does
+     [--clear]                      remove the note
   openmsg send <agent> <text>       send a message to an agent
      [--reply-to <message-id>]      keep the conversation of that message
   openmsg send project:<dir> <text> the next session in that directory takes it
@@ -83,18 +87,54 @@ A message to another person goes to "claude:api-worker@alice".
 Addresses look like "claude:api-worker" or "opencode:ses_123".
 `;
 
-async function cmdList() {
-  const agents = await allAgents();
+// "5m", "3h", "2d": the time since a moment, in the largest whole unit.
+function ago(ms) {
+  if (!ms) return null;
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+async function cmdList(args = []) {
+  const all = notes.attach(await allAgents());
+  const agents = args.includes("--all") ? all : all.filter((a) => !a.background);
+  const hidden = all.length - agents.length;
   if (agents.length === 0) {
-    console.log("no running agents found");
+    console.log(hidden ? `no running agents found. ${hidden} background sessions: openmsg list --all` : "no running agents found");
+    return;
+  }
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(agents.map(({ transport, ...a }) => a), null, 1));
     return;
   }
   const width = Math.max(...agents.map((a) => address(a).length));
+  const tilde = (p) => (p && p.startsWith(os.homedir()) ? `~${p.slice(os.homedir().length)}` : p);
   for (const a of agents) {
-    const where = a.cwd ? ` · ${a.cwd}` : "";
-    const note = a.note ? ` · ${a.note}` : "";
-    console.log(`${address(a).padEnd(width)}  ${a.status}${where}${note}`);
+    const times = [a.startedAt && `started ${ago(a.startedAt)} ago`, a.updatedAt && `active ${ago(a.updatedAt)} ago`];
+    const head = [address(a).padEnd(width), a.status.padEnd(7), times.filter(Boolean).join(", ")];
+    console.log(head.join("  ").trimEnd());
+    // The note of the agent comes first, because the agent wrote it about the
+    // work of now. The title of the vendor comes next.
+    const about = a.note ? `note: ${a.note}` : a.title ?? "(no title)";
+    console.log(`  ${[about, tilde(a.cwd)].filter(Boolean).join(" · ")}`);
   }
+  if (hidden) console.log(`\n${hidden} background sessions not shown. See them: openmsg list --all`);
+}
+
+async function cmdNote(args) {
+  const me = await self();
+  if (me.vendor === "shell" || me.unresolved) {
+    throw new Error("only an agent session has a note. Run this command from inside the agent.");
+  }
+  const text = args.includes("--clear") ? "" : args.filter((a) => a !== "--clear").join(" ");
+  if (!text && !args.includes("--clear")) {
+    console.log(notes.get(me) ?? "no note. Write one: openmsg note \"<what you work on>\"");
+    return;
+  }
+  const note = notes.set(me, text);
+  console.log(note ? `${address(me)}: ${note}` : `${address(me)}: note removed`);
 }
 
 async function cmdSend(target, text, replyTo = null, args = []) {
@@ -897,7 +937,8 @@ function commandName() {
 
 const [cmd, ...args] = process.argv.slice(2);
 try {
-  if (cmd === "list") await cmdList();
+  if (cmd === "list") await cmdList(args);
+  else if (cmd === "note") await cmdNote(args);
   else if (cmd === "send") {
     const rest = positional(args, ["reply-to", "project", "key"]);
     await cmdSend(rest[0], rest.slice(1).join(" "), flag(args, "reply-to"), args);

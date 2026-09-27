@@ -44,11 +44,114 @@ export function claudeAgents() {
       pid: rec.pid,
       cwd: rec.cwd,
       status: rec.status ?? "unknown",
+      title: claudeTitle(rec.cwd, rec.sessionId),
+      // A program that uses the SDK, such as a memory observer, starts a
+      // session too. It is not a session that a person talks to.
+      background: rec.entrypoint === "sdk-cli",
+      startedAt: rec.startedAt ?? null,
       updatedAt: rec.updatedAt ?? rec.startedAt ?? 0,
       transport: { kind: "uds", path: rec.messagingSocketPath },
     });
   }
   return out;
+}
+
+// Claude Code keeps the transcript of a session in a directory that the
+// working directory names, with each character that is not a letter or a digit
+// changed to "-".
+function claudeTranscript(cwd, sessionId) {
+  const root = path.join(HOME, ".claude", "projects");
+  const file = `${sessionId}.jsonl`;
+  if (cwd) {
+    const direct = path.join(root, cwd.replace(/[^A-Za-z0-9]/g, "-"), file);
+    if (fs.existsSync(direct)) return direct;
+  }
+  try {
+    for (const d of fs.readdirSync(root)) {
+      const candidate = path.join(root, d, file);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // No transcripts on this machine.
+  }
+  return null;
+}
+
+function claudeTitle(cwd, sessionId) {
+  if (!sessionId) return null;
+  const file = claudeTranscript(cwd, sessionId);
+  return file ? lastClaudeTitle(file) : null;
+}
+
+// Claude Code writes a short title of the conversation into the transcript,
+// and it writes it again as the work goes on. A transcript can hold many
+// megabytes, so this reads only the end of the file.
+export function lastClaudeTitle(file, maxBytes = 1024 * 1024) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    const length = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(length);
+    fs.readSync(fd, buf, 0, length, size - length);
+    const lines = buf.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('"ai-title"')) continue;
+      try {
+        const rec = JSON.parse(lines[i]);
+        if (rec.type === "ai-title" && rec.aiTitle) return String(rec.aiTitle).trim();
+      } catch {
+        // The first line of the window can be a part of a line.
+      }
+    }
+  } catch {
+    // The transcript is not there yet, or this command cannot read it.
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return null;
+}
+
+// Codex keeps the name of each thread in one index file. A later line for the
+// same thread replaces an earlier one.
+export function codexTitles(file = path.join(HOME, ".codex", "session_index.jsonl")) {
+  const titles = new Map();
+  let text = "";
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return titles;
+  }
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    try {
+      const rec = JSON.parse(line);
+      if (rec.id && rec.thread_name) titles.set(rec.id, String(rec.thread_name).trim());
+    } catch {
+      // A line that Codex writes now can be incomplete.
+    }
+  }
+  return titles;
+}
+
+// The first line of a rollout file tells where and when the thread started.
+function codexMeta(file) {
+  try {
+    const payload = JSON.parse(fs.readFileSync(file, "utf8").split("\n", 1)[0])?.payload ?? {};
+    const started = Date.parse(payload.timestamp ?? "");
+    return { cwd: payload.cwd ?? null, startedAt: Number.isNaN(started) ? null : started };
+  } catch {
+    // The file can be empty while Codex starts.
+    return { cwd: null, startedAt: null };
+  }
+}
+
+function mtime(file) {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
 }
 
 // The pids of the programs with this exact name. On macOS, pgrep leaves out
@@ -111,6 +214,8 @@ export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
           pid: Number(pid),
           cwd: s.directory ?? null,
           status: "unknown",
+          title: title && !title.startsWith("New session") ? title : null,
+          startedAt: s.time?.created ?? null,
           updatedAt: updated,
           transport: { kind: "http", base },
         });
@@ -124,6 +229,8 @@ export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
 // that runs the session holds that file open. openmsg lists the open rollout
 // files of every Codex process, and reads the thread id from each one.
 export async function codexAgents() {
+  let index = null;
+  const titles = () => (index ??= codexTitles());
   let pids = [];
   try {
     pids = await pgrep("codex");
@@ -144,23 +251,18 @@ export async function codexAgents() {
     for (const file of paths) {
       const id = file.match(/rollout-[\dT-]+-([0-9a-f-]{36})\.jsonl$/)?.[1];
       if (!id || found.has(id)) continue;
-      let cwd = null;
-      let name = id.slice(-8);
-      try {
-        const first = fs.readFileSync(file, "utf8").split("\n", 1)[0];
-        const meta = JSON.parse(first);
-        cwd = meta?.payload?.cwd ?? null;
-        if (cwd) name = `${path.basename(cwd)}-${id.slice(-4)}`;
-      } catch {
-        // The file can be empty while Codex starts. The thread id still works.
-      }
+      // The file can be empty while Codex starts. The thread id still works.
+      const { cwd, startedAt } = codexMeta(file);
       found.set(id, {
         vendor: "codex",
         id,
-        name,
+        name: cwd ? `${path.basename(cwd)}-${id.slice(-4)}` : id.slice(-8),
         pid: Number(pid),
         cwd,
         status: "unknown",
+        title: titles().get(id) ?? null,
+        startedAt,
+        updatedAt: mtime(file),
         transport: { kind: "codex-queue" },
       });
     }
@@ -173,6 +275,8 @@ export async function codexAgents() {
 // changed a moment ago belongs to a session that runs now.
 export function codexAgentsFromFiles({ maxAgeMs = 12 * 3600 * 1000 } = {}) {
   const root = path.join(HOME, ".codex", "sessions");
+  let index = null;
+  const titles = () => (index ??= codexTitles());
   const out = [];
   const walk = (dir, depth) => {
     let entries = [];
@@ -194,12 +298,8 @@ export function codexAgentsFromFiles({ maxAgeMs = 12 * 3600 * 1000 } = {}) {
         if (Date.now() - stat.mtimeMs > maxAgeMs) continue;
         const id = e.name.match(/rollout-[\dT-]+-([0-9a-f-]{36})\.jsonl$/)?.[1];
         if (!id) continue;
-        let cwd = null;
-        try {
-          cwd = JSON.parse(fs.readFileSync(full, "utf8").split("\n", 1)[0])?.payload?.cwd ?? null;
-        } catch {
-          // An empty file belongs to a session that just started.
-        }
+        // An empty file belongs to a session that just started.
+        const { cwd, startedAt } = codexMeta(full);
         out.push({
           vendor: "codex",
           id,
@@ -207,6 +307,9 @@ export function codexAgentsFromFiles({ maxAgeMs = 12 * 3600 * 1000 } = {}) {
           pid: null,
           cwd,
           status: "unknown",
+          title: titles().get(id) ?? null,
+          startedAt,
+          updatedAt: stat.mtimeMs,
           transport: { kind: "codex-queue" },
           mtimeMs: stat.mtimeMs,
         });

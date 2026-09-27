@@ -22,7 +22,8 @@ Each vendor has its own way to accept a message while it runs. openmsg uses that
 native way, and gives all of them one command:
 
 ```
-openmsg list                  # the agents that run now, all vendors
+openmsg list                  # the agents that run now, and the work of each
+openmsg note "<text>"         # tell the other agents what this one does
 openmsg send <agent> "<text>" # deliver a message now
 openmsg inbox                 # the messages for this agent
 openmsg whoami                # how other agents address this one

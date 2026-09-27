@@ -186,6 +186,32 @@ each session that runs now:
 | `status` | One of `idle`, `busy`, `unknown`. |
 | `transport` | The data that the adapter needs for delivery. |
 
+An adapter can also give these fields. Each one helps a person or an agent
+find the right session:
+
+| Field | Rule |
+|---|---|
+| `title` | The title that the vendor gives the conversation, or `null`. |
+| `startedAt` | The time when the session started, in milliseconds, or `null`. |
+| `updatedAt` | The time of the last activity, in milliseconds, or `null`. |
+| `background` | `true` for a session that a program started through an SDK. |
+
+The title comes from the record of the vendor:
+
+| Vendor | Source of the title |
+|---|---|
+| Claude Code | The last `ai-title` record in the transcript. |
+| Codex | The `thread_name` in `~/.codex/session_index.jsonl`. |
+| OpenCode | The `title` of the session. |
+
+A transcript can be large. The adapter reads only the end of the file.
+
+An agent can also write a note about its own work, with `openmsg note`. The
+note is in `$OPENMSG_HOME/notes.json`, and the key is `vendor:id`. The `list`
+command shows the note before the title, because the agent wrote the note
+about the work of now. The `list` command does not show a background session.
+`list --all` shows it.
+
 An adapter must not report a session that stopped. An adapter must work when
 the command runs in a sandbox. If a tool such as `lsof` is not available, the
 adapter must use the files of the vendor instead.

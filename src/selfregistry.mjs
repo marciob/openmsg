@@ -48,6 +48,7 @@ export function registered({ maxAgeMs = STALE_MS } = {}) {
       pid: null,
       cwd: rec.cwd,
       status: "unknown",
+      updatedAt: rec.lastSeen ?? null,
       transport: { kind: "mailbox" },
     });
   }

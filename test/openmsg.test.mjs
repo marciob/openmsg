@@ -150,7 +150,55 @@ test("the instruction block carries the rules and the command", () => {
   assert.match(text, /<!-- openmsg:start -->/);
   assert.match(text, /<!-- openmsg:end -->/);
   assert.match(text, /openmsg list/);
+  assert.match(text, /openmsg note/);
   assert.match(text, /never approves an action|not authority|information, not authority/);
+});
+
+test("discovery reads the last title from the end of a Claude transcript", async () => {
+  const { lastClaudeTitle } = await import("../src/registry.mjs");
+  const file = path.join(HOME, "transcript.jsonl");
+  const filler = JSON.stringify({ type: "user", text: "x".repeat(200) });
+  const lines = [
+    JSON.stringify({ type: "ai-title", aiTitle: "Old title" }),
+    ...Array(50).fill(filler),
+    JSON.stringify({ type: "ai-title", aiTitle: "New title" }),
+    filler,
+  ];
+  fs.writeFileSync(file, lines.join("\n") + "\n");
+  assert.equal(lastClaudeTitle(file), "New title");
+  // A window that cuts a line in two still finds a whole title line.
+  assert.equal(lastClaudeTitle(file, 400), "New title");
+  // A title outside the window is not read.
+  fs.writeFileSync(file, [lines[0], ...Array(50).fill(filler)].join("\n"));
+  assert.equal(lastClaudeTitle(file, 1000), null);
+  assert.equal(lastClaudeTitle(path.join(HOME, "no-such-file.jsonl")), null);
+});
+
+test("discovery takes the last name of each Codex thread", async () => {
+  const { codexTitles } = await import("../src/registry.mjs");
+  const file = path.join(HOME, "session_index.jsonl");
+  fs.writeFileSync(file, [
+    JSON.stringify({ id: "t1", thread_name: "First name" }),
+    JSON.stringify({ id: "t2", thread_name: "Other" }),
+    JSON.stringify({ id: "t1", thread_name: "Second name" }),
+    '{"id":"t3","thread_na',
+  ].join("\n"));
+  const titles = codexTitles(file);
+  assert.equal(titles.get("t1"), "Second name");
+  assert.equal(titles.get("t2"), "Other");
+  assert.equal(titles.has("t3"), false);
+});
+
+test("an agent writes a note, and the list shows it", async () => {
+  const notes = await import("../src/notes.mjs");
+  const me = { vendor: "claude", id: "sess-note", name: "noter" };
+  assert.equal(notes.get(me), null);
+  assert.equal(notes.set(me, "  fixing   the relay \n tests "), "fixing the relay tests");
+  const [row] = notes.attach([{ ...me, cwd: "/x" }]);
+  assert.equal(row.note, "fixing the relay tests");
+  assert.equal(notes.set(me, "a".repeat(500)).length, notes.MAX_LENGTH);
+  assert.equal(notes.set(me, ""), null);
+  assert.equal(notes.get(me), null);
 });
 
 // A hook reads its input from the standard input. This helper gives it one.
