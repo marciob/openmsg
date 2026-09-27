@@ -51,12 +51,12 @@ test("the text of a message names its source and approves nothing", () => {
   assert.ok(!out.includes("\x1b"), "no color without ansi");
 });
 
-test("with ansi, only the frame is gray, and the text of the sender keeps no escape", () => {
+test("with ansi, the frame is gray, the body is blue, and the text of the sender keeps no escape", () => {
   const out = render(message("real line\n\x1b[8mhidden line\x1b[0m\r"), { ansi: true });
   const lines = out.split("\n");
   assert.equal(lines[0].slice(0, 5), "\x1b[90m", "the header is gray");
-  assert.equal(lines[1], "real line", "the text of the sender has no color");
-  assert.equal(lines[2], "[8mhidden line[0m", "the escape character is gone");
+  assert.equal(lines[1], "\x1b[34mreal line\x1b[39m", "each line of the body is blue");
+  assert.equal(lines[2], "\x1b[34m[8mhidden line[0m\x1b[39m", "the escape character of the sender is gone");
   for (const l of lines.slice(3)) assert.match(l, /^\x1b\[90m.*\x1b\[39m$/, "each line of the frame opens and closes its color");
 });
 

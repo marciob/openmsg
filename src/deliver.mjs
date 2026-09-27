@@ -8,7 +8,8 @@ import { layoutOf, compose, bodyRange } from "./envelope.mjs";
 
 // `parts` is the layout of the text that the model reads: the frame and the text
 // of the sender. Each adapter shows the two apart in its own way:
-//   Claude Code shows the color of an escape sequence, so the frame is gray.
+//   Claude Code shows the color of an escape sequence, so the frame is gray
+//   and the text of the sender is blue.
 //   Codex removes each escape sequence, but it draws a byte range in its accent
 //   color. The text of the sender gets that color, and the model never sees it.
 //   OpenCode gets the plain text. Its display is not tested.
