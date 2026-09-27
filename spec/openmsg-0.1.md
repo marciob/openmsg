@@ -149,7 +149,8 @@ Rules:
 5. An adapter can show the frame and the text of the sender apart, if its
    vendor lets it. The words that the model reads stay the same.
    - Claude Code shows the color of an escape sequence. Its adapter makes
-     each line of the frame gray. The model also reads these sequences.
+     each line of the frame gray, and each line of the text of the sender
+     blue. The model also reads these sequences.
    - Codex removes each escape sequence. Its adapter marks the text of the
      sender as a text element, through the socket of the Codex daemon.
      Codex draws that text in its accent color. A text element is only for

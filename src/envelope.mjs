@@ -56,11 +56,12 @@ export function layout(head, body, foot) {
   return { head, body: clean(body), foot };
 }
 
-// With `ansi`, each line of the frame is gray. Claude Code starts each line
-// with its own color, so the color must open and close on each line.
+// With `ansi`, each line of the frame is gray, and each line of the body is
+// blue. Claude Code starts each line with its own color, so the color must open
+// and close on each line. Blue is the blue of the theme of each terminal.
 export function compose({ head, body, foot }, { ansi = false } = {}) {
-  const gray = (lines) => (ansi ? lines.map((l) => `\x1b[90m${l}\x1b[39m`) : lines);
-  return [...gray(head), body, ...gray(foot)].join("\n");
+  const paint = (code, lines) => (ansi ? lines.map((l) => `\x1b[${code}m${l}\x1b[39m`) : lines);
+  return [...paint(90, head), ...paint(34, body.split("\n")), ...paint(90, foot)].join("\n");
 }
 
 // The byte range of the body inside the plain text. Codex draws a range in its
