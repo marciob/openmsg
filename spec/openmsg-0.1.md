@@ -381,6 +381,15 @@ An implementation finds the sender in this order:
 If two sessions match, the implementation must refuse to send, and must tell the
 user to set `OPENMSG_SELF`.
 
+An agent does not send a message to its own session:
+
+1. `list` marks the row of the sender with `(you)`. With `--json`, the row of
+   the sender has `"you": true`.
+2. If the recipient and the sender are the same session, `send` refuses the
+   message. The same vendor and the same session id make the same session.
+3. A message to `project:<dir>` does not go to the session that sent it. It
+   goes to another live session in that directory, or it waits.
+
 ## 13. Conformance
 
 An implementation of version 0.1 must:

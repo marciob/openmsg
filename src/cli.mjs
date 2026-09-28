@@ -97,8 +97,19 @@ function ago(ms) {
   return `${Math.floor(s / 86400)}d`;
 }
 
+// Two records name one session when the vendor and the session id agree.
+function sameSession(a, b) {
+  return Boolean(a && b && a.vendor === b.vendor && a.id === b.id);
+}
+
 async function cmdList(args = []) {
-  const all = notes.attach(await allAgents());
+  // Several sessions can run in one directory with names that look alike. The
+  // mark "(you)" shows the agent which row is its own, so that it does not send
+  // to itself. A command outside a session has no row, and it gets no mark.
+  const [all, me] = await Promise.all([
+    allAgents().then((a) => notes.attach(a)),
+    self().catch(() => null),
+  ]);
   const agents = args.includes("--all") ? all : all.filter((a) => !a.background);
   const hidden = all.length - agents.length;
   if (agents.length === 0) {
@@ -106,14 +117,15 @@ async function cmdList(args = []) {
     return;
   }
   if (args.includes("--json")) {
-    console.log(JSON.stringify(agents.map(({ transport, ...a }) => a), null, 1));
+    console.log(JSON.stringify(agents.map(({ transport, ...a }) => ({ ...a, you: sameSession(a, me) })), null, 1));
     return;
   }
   const width = Math.max(...agents.map((a) => address(a).length));
   const tilde = (p) => (p && p.startsWith(os.homedir()) ? `~${p.slice(os.homedir().length)}` : p);
   for (const a of agents) {
     const times = [a.startedAt && `started ${ago(a.startedAt)} ago`, a.updatedAt && `active ${ago(a.updatedAt)} ago`];
-    const head = [address(a).padEnd(width), a.status.padEnd(7), times.filter(Boolean).join(", ")];
+    const you = sameSession(a, me) ? "(you)" : "";
+    const head = [address(a).padEnd(width), a.status.padEnd(7), times.filter(Boolean).join(", "), you];
     console.log(head.join("  ").trimEnd());
     // The note of the agent comes first, because the agent wrote it about the
     // work of now. The title of the vendor comes next.
@@ -161,6 +173,12 @@ async function cmdSend(target, text, replyTo = null, args = []) {
     throw new Error(
       `the session that sent ${replyTo} is gone, so the reply has no target. ` +
         `Its name was ${address(answered.openmsg.from)}. Send a new message instead of a reply.`,
+    );
+  }
+  if (sameSession(to, from)) {
+    throw new Error(
+      `${address(to)} is this session. An agent does not send a message to itself. ` +
+        "Leave it out of the recipients.",
     );
   }
   if (pinned && to.id !== pinned) {
@@ -220,8 +238,9 @@ async function cmdSendProject(target, text, replyTo, args) {
 
   // Only the records of Claude Code, because they are files. The discovery of
   // Codex and OpenCode runs lsof, and that costs seconds.
+  // A session that sends to its own directory does not get its own message.
   const live = claudeAgents()
-    .filter((a) => projectbox.sessionIsIn(a.cwd, dir))
+    .filter((a) => projectbox.sessionIsIn(a.cwd, dir) && !sameSession(a, from))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   for (const agent of live) {
     const got = projectbox.takeMessage(dir, message);
