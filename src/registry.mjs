@@ -19,9 +19,41 @@ function alive(pid) {
   }
 }
 
+// Claude Code keeps its state in ~/.claude, or in the directory that
+// CLAUDE_CONFIG_DIR names. A person can run sessions with more than one such
+// directory, for example ~/.claude-work for a second account. Each session of
+// each directory must be found, so openmsg reads all of them.
+export function claudeConfigDirs() {
+  const dirs = [path.join(HOME, ".claude")];
+  if (process.env.CLAUDE_CONFIG_DIR) dirs.push(path.resolve(process.env.CLAUDE_CONFIG_DIR));
+  try {
+    for (const d of fs.readdirSync(HOME)) {
+      if (!d.startsWith(".claude-")) continue;
+      const full = path.join(HOME, d);
+      if (fs.existsSync(path.join(full, "sessions"))) dirs.push(full);
+    }
+  } catch {
+    // The home directory cannot be read.
+  }
+  return [...new Set(dirs)];
+}
+
 // Claude Code writes one file for each session, with the path of its inbox socket.
 export function claudeAgents() {
-  const dir = path.join(HOME, ".claude", "sessions");
+  const out = [];
+  const seen = new Set();
+  for (const config of claudeConfigDirs()) {
+    for (const agent of claudeAgentsIn(config)) {
+      if (seen.has(agent.id)) continue;
+      seen.add(agent.id);
+      out.push(agent);
+    }
+  }
+  return out;
+}
+
+function claudeAgentsIn(config) {
+  const dir = path.join(config, "sessions");
   let files = [];
   try {
     files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
@@ -44,7 +76,7 @@ export function claudeAgents() {
       pid: rec.pid,
       cwd: rec.cwd,
       status: rec.status ?? "unknown",
-      title: claudeTitle(rec.cwd, rec.sessionId),
+      title: claudeTitle(config, rec.cwd, rec.sessionId),
       // A program that uses the SDK, such as a memory observer, starts a
       // session too. It is not a session that a person talks to.
       background: rec.entrypoint === "sdk-cli",
@@ -59,8 +91,8 @@ export function claudeAgents() {
 // Claude Code keeps the transcript of a session in a directory that the
 // working directory names, with each character that is not a letter or a digit
 // changed to "-".
-function claudeTranscript(cwd, sessionId) {
-  const root = path.join(HOME, ".claude", "projects");
+function claudeTranscript(config, cwd, sessionId) {
+  const root = path.join(config, "projects");
   const file = `${sessionId}.jsonl`;
   if (cwd) {
     const direct = path.join(root, cwd.replace(/[^A-Za-z0-9]/g, "-"), file);
@@ -77,9 +109,9 @@ function claudeTranscript(cwd, sessionId) {
   return null;
 }
 
-function claudeTitle(cwd, sessionId) {
+function claudeTitle(config, cwd, sessionId) {
   if (!sessionId) return null;
-  const file = claudeTranscript(cwd, sessionId);
+  const file = claudeTranscript(config, cwd, sessionId);
   return file ? lastClaudeTitle(file) : null;
 }
 
@@ -436,8 +468,19 @@ export async function self() {
     return known ?? { vendor: "codex", id, name: id.slice(-8), transport: { kind: "codex-queue" } };
   }
   if (process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
-    const me = claudeAgents().find((a) => a.transport.path === process.env.CLAUDE_CODE_MESSAGING_SOCKET);
+    const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+    const me = claudeAgents().find((a) => a.transport.path === socket);
     if (me && (await runsUnder(me.pid))) return me;
+    // A Claude session started this command, but no session record holds its
+    // socket. A shell name here is false: nobody can send to it, and an agent
+    // gives it to other agents as its own address.
+    if (!me) {
+      throw new Error(
+        `this command runs in a Claude Code session, but openmsg cannot find the record of that session ` +
+          `(socket ${socket}). openmsg reads ${claudeConfigDirs().map((d) => `${d}/sessions`).join(", ")}. ` +
+          `If the session uses another CLAUDE_CONFIG_DIR, run openmsg from inside it, or set OPENMSG_SELF.`,
+      );
+    }
   }
   const line = await ancestors(process.ppid);
   let [codex, opencode] = await Promise.all([codexAgents(), opencodeAgents()]);

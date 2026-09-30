@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 113 of them
+node --test                      # the tests, 117 of them
 npm publish --access public      # a release. See "How a release goes" below.
 ```
 
@@ -91,7 +91,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. 113 tests in `test/` cover the envelope, the
+4. Test what needs no account. 117 tests in `test/` cover the envelope, the
    mailbox, the project box, the hop limit, the three hook shapes, and every
    part of 0.2. Two tests need `openssl` for a certificate, and they say so when it
    is not there. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
