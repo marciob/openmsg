@@ -206,6 +206,16 @@ The title comes from the record of the vendor:
 
 A transcript can be large. The adapter reads only the end of the file.
 
+Claude Code keeps its state in `~/.claude`, or in the directory that
+`CLAUDE_CONFIG_DIR` names. One person can run sessions with more than one such
+directory, for example one for each account. The Claude Code adapter reads the
+session records of each directory:
+
+1. `~/.claude`.
+2. Each `~/.claude-*` directory that holds a `sessions` directory.
+3. The directory that `CLAUDE_CONFIG_DIR` names in the environment of the
+   command.
+
 An agent can also write a note about its own work, with `openmsg note`. The
 note is in `$OPENMSG_HOME/notes.json`, and the key is `vendor:id`. The `list`
 command shows the note before the title, because the agent wrote the note
@@ -372,6 +382,9 @@ An implementation finds the sender in this order:
    this socket in its environment too. The socket names the sender only if
    the Claude session is a parent process of the command, and no other agent
    runs between the two.
+   If no session record holds this socket, the implementation must stop with
+   an error. It must not give a shell name, because no agent can send to that
+   name.
 3. The process tree. If a parent process is an agent, the implementation uses
    the session of that process. On macOS, `pgrep` leaves out the parents of
    its own process, so the implementation gives it `-a`.
