@@ -110,7 +110,7 @@ Works and tested with live sessions: Claude Code both ways, Codex both ways,
 including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.4.5. It shows the title, the age, and the note of each agent in `list`, and it marks the own row with `(you)`. `send` refuses a message to the own session. Version 0.4.6, which finds the sessions of each Claude config directory, waits for `npm publish`. On `github.com/marciob/openmsg`: the code of 0.4, the
+On npm: version 0.4.6. It shows the title, the age, and the note of each agent in `list`, and it marks the own row with `(you)`. `send` refuses a message to the own session. It finds the sessions of each Claude config directory, such as `~/.claude-livus`. On `github.com/marciob/openmsg`: the code of 0.4, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
