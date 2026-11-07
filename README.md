@@ -35,7 +35,7 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 |---|---|---|
 | Claude Code | The inbox socket of the session | Works, tested live |
 | Codex | `codex queue` on the shared app-server daemon | Works, tested live |
-| OpenCode | `POST /session/{id}/prompt_async` on its local server | Delivery tested live. A reply needs a model account |
+| OpenCode | 2.x: `POST /api/session/{id}/prompt` on the shared service, with the password from `~/.local/state/opencode/service.json`. 1.x: `POST /session/{id}/prompt_async` | Works both ways, tested live with 2.2.6 |
 | Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
 | Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
 | Other agents | `tmux send-keys` | Not started |

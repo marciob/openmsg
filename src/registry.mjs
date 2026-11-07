@@ -196,9 +196,82 @@ async function pgrep(name) {
   return stdout.trim().split("\n").filter(Boolean);
 }
 
-// OpenCode runs an HTTP server for each user interface. The port is in the
-// listening sockets of the process.
-export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
+// OpenCode 2 runs one shared server, `opencode serve --service`, and each user
+// interface is a client of it. The server writes its address, its process id,
+// and its password to one file. Every request needs the password, with Basic
+// authentication and the user name "opencode". The API is under /api, and each
+// answer holds its result in `data`.
+// A test sets OPENMSG_OPENCODE_SERVICE to a file of its own.
+export function opencodeServiceFile() {
+  return process.env.OPENMSG_OPENCODE_SERVICE || path.join(HOME, ".local", "state", "opencode", "service.json");
+}
+
+export function opencodeService(file = opencodeServiceFile()) {
+  try {
+    const s = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!s.url || !s.password) return null;
+    if (s.pid && !alive(s.pid)) return null;
+    return { base: s.url.replace(/\/$/, ""), pid: s.pid ?? null, auth: `Basic ${Buffer.from(`opencode:${s.password}`).toString("base64")}` };
+  } catch {
+    return null;
+  }
+}
+
+async function opencodeServiceAgents({ maxAgeMs, file } = {}) {
+  const service = opencodeService(file);
+  if (!service) return [];
+  const get = async (p) => {
+    const res = await fetch(`${service.base}${p}`, {
+      headers: { authorization: service.auth },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!res.ok) throw new Error(`opencode ${res.status}`);
+    return (await res.json()).data;
+  };
+  let sessions;
+  let active = {};
+  try {
+    sessions = await get("/api/session?parentID=null");
+  } catch {
+    return [];
+  }
+  try {
+    active = (await get("/api/session/active")) ?? {};
+  } catch {
+    // Without this list, the state of each session stays unknown.
+  }
+  const out = [];
+  for (const s of sessions ?? []) {
+    const updated = s.time?.updated ?? 0;
+    if (Date.now() - updated > maxAgeMs) continue;
+    const title = (s.title ?? "").trim();
+    const short = title && !title.startsWith("New session") ? title.slice(0, 32).replace(/\s+/g, "-") : s.id.slice(-4);
+    out.push({
+      vendor: "opencode",
+      id: s.id,
+      name: `${short}-${s.id.slice(-4)}`,
+      pid: service.pid,
+      cwd: s.location?.directory ?? null,
+      status: active[s.id] ? "busy" : "idle",
+      title: title && !title.startsWith("New session") ? title : null,
+      startedAt: s.time?.created ?? null,
+      updatedAt: updated,
+      transport: { kind: "http", base: service.base, api: 2 },
+    });
+  }
+  return out;
+}
+
+// OpenCode 1 runs an HTTP server for each user interface. The port is in the
+// listening sockets of the process. OpenCode 2 has the shared server above.
+export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000, serviceFile } = {}) {
+  const service = await opencodeServiceAgents({ maxAgeMs, file: serviceFile });
+  const legacy = await opencodeLegacyAgents({ maxAgeMs, skipPid: service[0]?.pid });
+  const seen = new Set(service.map((a) => a.id));
+  return [...service, ...legacy.filter((a) => !seen.has(a.id))];
+}
+
+async function opencodeLegacyAgents({ maxAgeMs, skipPid = null }) {
   let pids = [];
   try {
     // `-x` matches the name of the program. `-f` matches the whole command
@@ -211,9 +284,12 @@ export async function opencodeAgents({ maxAgeMs = 24 * 3600 * 1000 } = {}) {
   const found = new Map();
   const out = [];
   for (const pid of pids) {
+    if (Number(pid) === skipPid) continue;
     let ports = [];
     try {
-      const { stdout } = await run("lsof", ["-nP", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"]);
+      // `-a` joins the conditions. Without it, lsof gives the listening ports
+      // of every process, and openmsg asks each of them for sessions.
+      const { stdout } = await run("lsof", ["-a", "-nP", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn"]);
       ports = [...stdout.matchAll(/n\S*:(\d+)/g)].map((m) => Number(m[1]));
     } catch {
       continue;
@@ -474,13 +550,27 @@ export async function self() {
     // A Claude session started this command, but no session record holds its
     // socket. A shell name here is false: nobody can send to it, and an agent
     // gives it to other agents as its own address.
-    if (!me) {
+    if (!me && !process.env.OPENCODE_SESSION_ID) {
       throw new Error(
         `this command runs in a Claude Code session, but openmsg cannot find the record of that session ` +
           `(socket ${socket}). openmsg reads ${claudeConfigDirs().map((d) => `${d}/sessions`).join(", ")}. ` +
           `If the session uses another CLAUDE_CONFIG_DIR, run openmsg from inside it, or set OPENMSG_SELF.`,
       );
     }
+  }
+  // OpenCode 2 gives the session id to every shell command that it runs.
+  if (process.env.OPENCODE_SESSION_ID) {
+    const id = process.env.OPENCODE_SESSION_ID;
+    const known = (await opencodeAgents()).find((a) => a.id === id);
+    if (known) return known;
+    const service = opencodeService();
+    return {
+      vendor: "opencode",
+      id,
+      name: id.slice(-4),
+      cwd: process.cwd(),
+      transport: service ? { kind: "http", base: service.base, api: 2 } : { kind: "mailbox" },
+    };
   }
   const line = await ancestors(process.ppid);
   let [codex, opencode] = await Promise.all([codexAgents(), opencodeAgents()]);

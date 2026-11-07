@@ -164,12 +164,14 @@ Rules:
      the display, and the model never reads it. If the socket fails before
      the message leaves, the adapter uses `codex queue`, with no color.
    - OpenCode shows no escape sequence and no markdown in a user message.
-     It shows only the first text part that is not `synthetic`, and the
-     model reads every part, in order. The adapter sends the header, the
-     text of the sender, and the line of dashes after it in one part. It
-     sends the notice and the answer command in a synthetic part. The
-     person at the terminal sees the sender, and the model reads all the
-     words.
+     In version 1, it shows only the first text part that is not
+     `synthetic`, and the model reads every part, in order. The adapter
+     sends the header, the text of the sender, and the line of dashes after
+     it in one part. It sends the notice and the answer command in a
+     synthetic part. The person at the terminal sees the sender, and the
+     model reads all the words. Version 2 takes one text for each prompt,
+     and each separate input starts a separate turn. So the adapter sends
+     all the words in one prompt, and the person sees the notice too.
 
 ## 6. Discovery
 
@@ -250,7 +252,7 @@ The adapters of version 0.1:
 |---|---|---|
 | Claude Code | The inbox socket of the session | Yes |
 | Codex | `codex queue` on the shared app-server daemon | Yes |
-| OpenCode | `POST /session/{id}/prompt_async` | Yes |
+| OpenCode | Version 2: `POST /api/session/{id}/prompt` on the shared service. Version 1: `POST /session/{id}/prompt_async` | Yes |
 | Gemini CLI | A hook that reads the mailbox at the end of a turn | No |
 | Cursor CLI | A hook that reads the mailbox at the end of a turn | No |
 
@@ -381,6 +383,9 @@ An implementation finds the sender in this order:
 1. The variable `OPENMSG_SELF`, when the user sets it.
 2. The variable of the vendor. Claude Code gives
    `CLAUDE_CODE_MESSAGING_SOCKET`. Codex gives `CODEX_THREAD_ID`.
+   OpenCode 2 gives `OPENCODE_SESSION_ID` to each shell command of the agent.
+   The implementation reads the Claude socket before this variable, because
+   a Claude session that starts in an OpenCode shell keeps the variable.
    A program that a Claude session starts, such as an OpenCode server, gets
    this socket in its environment too. The socket names the sender only if
    the Claude session is a parent process of the command, and no other agent
@@ -422,7 +427,7 @@ State of this implementation, 2026-09-19:
 |---|---|
 | Envelope, rendering, addresses | Done |
 | Claude Code and Codex adapters | Done, tested with live sessions |
-| OpenCode adapter | Delivery tested against a live server. A reply needs a model account |
+| OpenCode adapter | Done. Delivery and a reply tested live with version 2.2.6 on 2026-11-07 |
 | Cursor and Gemini adapters | Written as a hook, tested with fixtures. A live test needs an account |
 | `replyTo` and the `contextId` of a reply | Done. `openmsg send ... --reply-to <id>` keeps the conversation. |
 | Hop limit | Done. A reply adds one hop, and the chain stops after 100. Then the agent asks its user. |
