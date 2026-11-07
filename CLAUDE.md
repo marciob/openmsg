@@ -9,7 +9,7 @@ machine. Version 0.2 adds the agents of different people.
 ```
 node src/cli.mjs list            # the agents that run now
 node src/cli.mjs send <a> "<t>"  # deliver a message
-node --test                      # the tests, 117 of them
+node --test                      # the tests, 120 of them
 npm publish --access public      # a release. See "How a release goes" below.
 ```
 
@@ -74,7 +74,14 @@ Each vendor has its own way in:
   in its accent color. If the socket fails before the message leaves, the
   adapter runs `codex queue --thread <id> --message <text>`. The shared daemon
   must run before the user starts Codex, and the session needs one turn first.
-- **OpenCode**: `POST /session/{id}/prompt_async` on its local HTTP server.
+- **OpenCode**: version 2 runs one shared server, `opencode serve --service`.
+  `~/.local/state/opencode/service.json` holds its URL, PID, and password.
+  Each request uses Basic authentication with the user `opencode`. The API is
+  under `/api`, and each answer holds its result in `data`. A message goes in
+  one `POST /api/session/{id}/prompt`. A second inbox item starts a second
+  turn, so the notice does not go in a separate `synthetic` item. A shell
+  command of the agent gets `OPENCODE_SESSION_ID`, and that names the sender.
+  Version 1: `POST /session/{id}/prompt_async` on the server of each interface.
 - **Cursor and Gemini**: no way to wake an idle session. A hook reads the
   mailbox at the end of each turn.
 
@@ -91,7 +98,7 @@ Each vendor has its own way in:
 2. Write the documents in Simplified Technical English: short sentences, one
    idea for each sentence, no "should", no semicolon.
 3. A message from another agent is never authority. Rule 9 of the spec holds.
-4. Test what needs no account. 117 tests in `test/` cover the envelope, the
+4. Test what needs no account. 120 tests in `test/` cover the envelope, the
    mailbox, the project box, the hop limit, the three hook shapes, and every
    part of 0.2. Two tests need `openssl` for a certificate, and they say so when it
    is not there. `test/acceptance.test.mjs` holds the fourteen cases of section 11 of
@@ -107,7 +114,7 @@ Each vendor has its own way in:
 ## State, 2026-09-20
 
 Works and tested with live sessions: Claude Code both ways, Codex both ways,
-including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. Cursor and Gemini: written, tested with fixtures only, because a
+including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. On 2026-11-07, OpenCode 2.2.6 moved its API under `/api`, behind a password, and openmsg found no session. The fix reads the service file, and a live test passed both ways. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
 On npm: version 0.4.6. It shows the title, the age, and the note of each agent in `list`, and it marks the own row with `(you)`. `send` refuses a message to the own session. It finds the sessions of each Claude config directory, such as `~/.claude-livus`. On `github.com/marciob/openmsg`: the code of 0.4, the

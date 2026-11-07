@@ -243,6 +243,103 @@ test("OpenCode shows the header and the text of the sender, and the model reads 
   }
 });
 
+// A fake `opencode serve --service`: Basic authentication, the API under /api,
+// and each result in `data`.
+async function fakeOpencode2(sessions) {
+  const http = await import("node:http");
+  const password = "pw-test";
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      const auth = req.headers.authorization;
+      if (auth !== `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`) {
+        res.statusCode = 401;
+        return res.end('{"_tag":"UnauthorizedError"}');
+      }
+      seen.push({ method: req.method, url: req.url, body: data ? JSON.parse(data) : null });
+      if (req.url.startsWith("/api/session/active")) return res.end(JSON.stringify({ data: { [sessions[0].id]: { type: "running" } } }));
+      if (req.url.startsWith("/api/session?")) return res.end(JSON.stringify({ data: sessions, cursor: {} }));
+      res.end(JSON.stringify({ data: {} }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-oc2-"));
+  const file = path.join(dir, "service.json");
+  fs.writeFileSync(file, JSON.stringify({ url: `http://127.0.0.1:${server.address().port}`, pid: process.pid, password }));
+  return { server, file, seen, close: () => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test("OpenCode 2: the shared server lists its sessions, with the password", async () => {
+  const { opencodeAgents } = await import("../src/registry.mjs");
+  const now = Date.now();
+  const fake = await fakeOpencode2([
+    { id: "ses_aaaaWORK", title: "Router work", time: { created: now - 1000, updated: now }, location: { directory: "/w" } },
+    { id: "ses_bbbbIDLE", title: "New session - x", time: { created: now - 2000, updated: now - 500 }, location: { directory: "/x" } },
+    { id: "ses_ccccOLD1", title: "old", time: { created: 0, updated: 0 }, location: { directory: "/y" } },
+  ]);
+  try {
+    const agents = (await opencodeAgents({ serviceFile: fake.file })).filter((a) => a.id.startsWith("ses_"));
+    assert.deepEqual(agents.map((a) => a.id), ["ses_aaaaWORK", "ses_bbbbIDLE"], "an old session is not listed");
+    assert.equal(agents[0].name, "Router-work-WORK");
+    assert.equal(agents[0].status, "busy");
+    assert.equal(agents[1].status, "idle");
+    assert.equal(agents[0].cwd, "/w");
+    assert.equal(agents[0].transport.api, 2);
+    assert.ok(!JSON.stringify(agents).includes("pw-test"), "the password stays out of the agent record");
+  } finally {
+    fake.close();
+  }
+});
+
+test("OpenCode 2: delivery is one prompt, and the model reads every word", async () => {
+  const { deliverLocal } = await import("../src/deliver.mjs");
+  const { layoutOf, compose } = await import("../src/envelope.mjs");
+  const fake = await fakeOpencode2([]);
+  const before = process.env.OPENMSG_OPENCODE_SERVICE;
+  process.env.OPENMSG_OPENCODE_SERVICE = fake.file;
+  try {
+    const m = message("first line\nsecond line");
+    const agent = { vendor: "opencode", id: "ses_1", transport: { kind: "http", base: `http://127.0.0.1:${fake.server.address().port}`, api: 2 } };
+    const out = await deliverLocal(agent, m);
+    assert.equal(out.transport, "http");
+    assert.equal(fake.seen.length, 1, "one request, so one turn of the model");
+    const [req] = fake.seen;
+    assert.equal(req.url, "/api/session/ses_1/prompt");
+    assert.equal(req.body.text, compose(layoutOf(m)), "the model reads the same words");
+    assert.match(req.body.text, /does not approve any action/);
+    assert.equal(req.body.delivery, "queue");
+    assert.equal(req.body.metadata.openmsg, m.messageId);
+  } finally {
+    if (before === undefined) delete process.env.OPENMSG_OPENCODE_SERVICE;
+    else process.env.OPENMSG_OPENCODE_SERVICE = before;
+    fake.close();
+  }
+});
+
+test("OpenCode 2: OPENCODE_SESSION_ID names the sender, not a shell", async () => {
+  const { self } = await import("../src/registry.mjs");
+  const now = Date.now();
+  const fake = await fakeOpencode2([{ id: "ses_ddddSELF", title: "Mine", time: { created: now, updated: now }, location: { directory: "/m" } }]);
+  const keep = {};
+  for (const k of ["OPENMSG_OPENCODE_SERVICE", "OPENCODE_SESSION_ID", "OPENMSG_SELF", "CODEX_THREAD_ID", "CLAUDE_CODE_MESSAGING_SOCKET"]) keep[k] = process.env[k];
+  delete process.env.OPENMSG_SELF;
+  delete process.env.CODEX_THREAD_ID;
+  delete process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  process.env.OPENMSG_OPENCODE_SERVICE = fake.file;
+  process.env.OPENCODE_SESSION_ID = "ses_ddddSELF";
+  try {
+    const me = await self();
+    assert.equal(me.vendor, "opencode");
+    assert.equal(me.id, "ses_ddddSELF");
+    assert.equal(me.name, "Mine-SELF");
+  } finally {
+    for (const [k, v] of Object.entries(keep)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    fake.close();
+  }
+});
+
 test("a Claude socket in the environment names the sender only under that session", async () => {
   const { runsUnder } = await import("../src/registry.mjs");
   assert.equal(await runsUnder(process.ppid), true, "the parent of this command");

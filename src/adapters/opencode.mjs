@@ -12,6 +12,7 @@
 // Source: packages/opencode/src/cli/cmd/tui/routes/session/index.tsx (v1.1.11),
 // packages/opencode/src/session/message-v2.ts.
 import { render, RULE } from "../envelope.mjs";
+import { opencodeService, opencodeServiceFile } from "../registry.mjs";
 
 export function partsOf({ head, body, foot }) {
   const cut = foot.indexOf(RULE) + 1;
@@ -20,7 +21,33 @@ export function partsOf({ head, body, foot }) {
   return rest.length ? [shown, { type: "text", synthetic: true, text: rest.join("\n") }] : [shown];
 }
 
+// OpenCode 2 has no `prompt_async` and no part list. `/api/.../prompt` takes one
+// text. `/api/.../synthetic` exists, but the server runs each item of the inbox
+// as its own turn: a hidden notice after the text arrives one turn late, and it
+// costs a second call to the model. So the whole text goes in one prompt, and
+// the person sees the notice too. `queue` waits for a turn that runs now.
+// Source: GET /openapi.json of `opencode serve --service`, version 2.2.6, and a
+// live test on 2026-11-07.
+async function deliverV2(agent, message, { text, layout }) {
+  const service = opencodeService();
+  if (!service) throw new Error(`opencode: no running service in ${opencodeServiceFile()}`);
+  const body = {
+    text: layout ? [...layout.head, layout.body, ...layout.foot].join("\n") : (text ?? render(message)),
+    delivery: "queue",
+    metadata: { openmsg: message?.messageId ?? true },
+  };
+  const res = await fetch(`${agent.transport.base}/api/session/${agent.id}/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: service.auth },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`opencode ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return { delivered: true, transport: "http" };
+}
+
 export async function deliver(agent, message, { text = null, layout = null } = {}) {
+  if (agent.transport?.api === 2) return deliverV2(agent, message, { text, layout });
   const url = `${agent.transport.base}/session/${agent.id}/prompt_async`;
   const parts = layout ? partsOf(layout) : [{ type: "text", text: text ?? render(message) }];
   const res = await fetch(url, {
