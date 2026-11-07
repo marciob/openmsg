@@ -137,6 +137,37 @@ for a message to a directory:
 openmsg install --hooks
 ```
 
+## Troubleshooting
+
+### `EPERM: operation not permitted` on macOS
+
+The symptoms:
+
+- `openmsg list` or `openmsg send` stops with `EPERM: operation not permitted, open '.../src/cli.mjs'`.
+- Codex shows `Hook failed: hook exited with code 126`.
+
+The cause: macOS protects `~/Desktop`, `~/Documents`, and `~/Downloads`. A
+program in a terminal gets access to these folders through the terminal app.
+When the terminal app loses this access, every agent in that terminal loses it
+too. An update of the terminal app can cause this. On 2026-10-22, an update of
+Cursor caused it on one Mac. The sandbox of the agent is not the cause.
+
+To find the process that macOS blocks:
+
+```
+log show --last 10m --predicate 'eventMessage CONTAINS "System Policy"' | grep deny
+```
+
+To correct the fault:
+
+1. Open System Settings > Privacy & Security > Full Disk Access.
+2. Remove the terminal app (Cursor, VS Code, iTerm, or Terminal), then add it again.
+3. Quit the terminal app, then open it again. A running app keeps the old state.
+
+Until you do this, an agent in that terminal still receives a message, because
+the entry point of each vendor is outside these folders. The agent cannot send
+a message.
+
 ## How each vendor lets a message in
 
 [`research/2026-09-19-transport-research.md`](https://github.com/marciob/openmsg/blob/main/research/2026-09-19-transport-research.md)
