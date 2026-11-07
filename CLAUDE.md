@@ -117,7 +117,7 @@ Works and tested with live sessions: Claude Code both ways, Codex both ways,
 including automatic replies. OpenCode: delivery and an automatic reply tested on 2026-09-27. On 2026-11-07, OpenCode 2.2.6 moved its API under `/api`, behind a password, and openmsg found no session. The fix reads the service file, and a live test passed both ways. Cursor and Gemini: written, tested with fixtures only, because a
 live test needs an account that this machine does not have.
 
-On npm: version 0.4.6. It shows the title, the age, and the note of each agent in `list`, and it marks the own row with `(you)`. `send` refuses a message to the own session. It finds the sessions of each Claude config directory, such as `~/.claude-livus`. On `github.com/marciob/openmsg`: the code of 0.4, the
+On npm: version 0.4.7. It reaches the shared server of OpenCode 2, and an OpenCode agent signs with its own session. It shows the title, the age, and the note of each agent in `list`, and it marks the own row with `(you)`. `send` refuses a message to the own session. It finds the sessions of each Claude config directory, such as `~/.claude-livus`. On `github.com/marciob/openmsg`: the code of 0.4, the
 two specifications, and the research. The history of the repository holds no
 document before 2026-09-20, because a rewrite took `docs/` and `ai-docs/` out
 of every commit.
