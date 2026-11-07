@@ -3,8 +3,9 @@
 import { randomUUID } from "node:crypto";
 
 // A chain of replies inside one conversation. It stops a loop between two
-// agents that answer each other without end.
-export const MAX_HOPS = 8;
+// agents that answer each other without end. At the limit, the agent asks its
+// user, and a new message starts a new chain.
+export const MAX_HOPS = 100;
 
 export function createMessage({ from, to, text, contextId, replyTo }) {
   return {
