@@ -82,7 +82,12 @@ export function createRemote({
     },
   };
   if (message.openmsg.hops.length > MAX_HOPS) {
-    throw fail("hop-limit", `this conversation already passed through ${message.openmsg.hops.length - 1} agents`);
+    throw fail(
+      "hop-limit",
+      `this conversation already passed through ${message.openmsg.hops.length - 1} agents. ` +
+        "Ask your user if they want to continue. If the user says yes, send the text again " +
+        "as a new message, without --reply-to. A new message starts a new conversation.",
+    );
   }
   return signedView(message);
 }

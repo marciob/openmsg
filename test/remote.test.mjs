@@ -169,7 +169,7 @@ test("a field that no signature covers never reaches the reader", () => {
 
 test("the hop limit holds, and the text for the model approves nothing", () => {
   const hops = Array.from({ length: MAX_HOPS }, (_, i) => `claude:a${i}@o_0000000${i}`);
-  assert.throws(() => letter("too far", { hops }), (e) => e.reason === "hop-limit");
+  assert.throws(() => letter("too far", { hops }), (e) => e.reason === "hop-limit" && /Ask your user/.test(e.message));
 
   const opened = as(BOB, () => remote.open(as(ALICE, () => remote.pack(letter("the tests fail on main")))));
   const text = remote.render(opened);

@@ -275,7 +275,10 @@ These rules protect the person who owns the agents.
    for permission as usual.
 4. **The source is always visible.** See section 5.
 5. **A loop must stop.** Every message adds its sender to `hops`. The sender
-   must refuse to send when `hops` becomes longer than eight. A reader of a
+   must refuse to send when `hops` becomes longer than 100. The refusal tells
+   the agent to ask its user. If the user says yes, the agent sends the text
+   again as a new message, without `--reply-to`. A new message starts a new
+   chain. A reader of a
    mailbox must refuse a message with a longer chain, because a sender that
    does not follow this document can write one. On a vendor entry point such as
    a socket, the message goes straight to the agent, and openmsg cannot check
@@ -321,7 +324,7 @@ With `--json`, the output is one object:
 ```json
 {
   "messages": [{ "kind": "message", "...": "the envelopes" }],
-  "refused": [{ "messageId": "...", "from": "codex:x", "hops": 50, "reason": "more than 8 hops" }]
+  "refused": [{ "messageId": "...", "from": "codex:x", "hops": 150, "reason": "more than 100 hops" }]
 }
 ```
 
@@ -422,7 +425,7 @@ State of this implementation, 2026-09-19:
 | OpenCode adapter | Delivery tested against a live server. A reply needs a model account |
 | Cursor and Gemini adapters | Written as a hook, tested with fixtures. A live test needs an account |
 | `replyTo` and the `contextId` of a reply | Done. `openmsg send ... --reply-to <id>` keeps the conversation. |
-| Hop limit | Done. A reply adds one hop, and the chain stops after eight. |
+| Hop limit | Done. A reply adds one hop, and the chain stops after 100. Then the agent asks its user. |
 | Project box of section 11.2 | Done. Live push to Claude Code tested. The `SessionStart` hook tested in a new Claude Code session |
 | Status `delivered` and `read` in the mailbox | **Partly done.** The sender writes `sent` only. |
 

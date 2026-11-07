@@ -198,7 +198,8 @@ async function cmdSend(target, text, replyTo = null, args = []) {
   if (message.openmsg.hops.length > MAX_HOPS) {
     throw new Error(
       `hop limit reached: this conversation already passed through ${message.openmsg.hops.length - 1} agents. ` +
-        "Tell your user instead.",
+        "Ask your user if they want to continue. If the user says yes, send the text again " +
+        "as a new message, without --reply-to. A new message starts a new conversation.",
     );
   }
 
