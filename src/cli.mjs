@@ -37,6 +37,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg send <agent> <text>       send a message to an agent
      [--reply-to <message-id>]      keep the conversation of that message
   openmsg send project:<dir> <text> the next session in that directory takes it
+  openmsg send project:<name>@<owner> <text>   the same, in a directory of another person
      [--key <k>]                    replace the waiting message with that key
   openmsg clear project:<dir> --key <k>   remove the waiting message with that key
   openmsg waiting                   the project messages that wait for a session
@@ -160,6 +161,10 @@ async function cmdSend(target, text, replyTo = null, args = []) {
   if (!target || !text) throw new Error('usage: openmsg send <agent> "<text>" [--reply-to <message-id>]');
   // An alias with an owner, such as "claude:api-worker@alice", belongs to
   // another person. That message goes through the two gateways.
+  // "project:web-app@alice" names a directory of another person by its name.
+  // A project address of this machine holds a path, and a path has a slash,
+  // a dot, or a tilde.
+  if (/^project:[^/.~@][^/@]*@[^/@]+$/.test(target)) return cmdSendRemote(target, text, replyTo, args);
   if (projectbox.isProjectAddress(target)) return cmdSendProject(target, text, replyTo, args);
   if (target.includes("@")) return cmdSendRemote(target, text, replyTo, args);
   const from = await self();
@@ -284,6 +289,17 @@ function cmdWaiting() {
   for (const { dir, messages } of rows) {
     for (const m of messages) {
       const key = m.openmsg.key ? ` [${m.openmsg.key}]` : "";
+      if (m.openmsg.version === remote.VERSION) {
+        // A message from another person. Its text is for the session that
+        // takes it, and the owner reads it with `held`.
+        const who = `${m.openmsg.from.vendor}:${m.openmsg.from.name ?? m.openmsg.from.id}@${m.sender?.label ?? m.openmsg.from.owner}`;
+        const was = m.placed?.wasFor;
+        console.log(`${dir} from ${who} at ${m.createdAt} (${m.messageId.slice(0, 8)})`);
+        console.log(was ? `  It was for the session ${was.alias}, which ended.` : "  It is for the directory, and not for one session.");
+        if (was?.vendor === "claude") console.log(`  Open that conversation again: cd ${dir} && claude --resume ${was.session}`);
+        console.log(`  The next session in that directory takes it. Read it: openmsg held ${m.messageId.slice(0, 8)} --text\n`);
+        continue;
+      }
       console.log(`${dir}${key} from ${address(m.openmsg.from)} at ${m.createdAt}\n${textOf(m)}\n`);
     }
   }
@@ -470,7 +486,9 @@ async function cmdSendRemote(target, text, replyTo, args) {
     const names = rows.map((r) => `${r.alias}@${label}`).join(", ") || "nothing";
     throw new Error(`${member.label} does not publish "${alias}" in this project. Published: ${names}`);
   }
-  if (row.live === false) console.error(`openmsg: the session ${row.alias}@${label} does not run now`);
+  if (row.live === false && row.vendor !== "project") {
+    console.error(`openmsg: the session ${row.alias}@${label} does not run now. The next session in its directory takes the message.`);
+  }
   // The message is sealed for the machine that holds that session, and the
   // routing data of that machine gave this key.
   const sealTo = row.sealTo ?? null;
@@ -493,7 +511,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
   const how = {
     "adapter-accepted": `reached the agent of ${member.label}`,
     held: `waits for ${member.label} to accept you`,
-    queued: `waits in the mailbox of ${member.label}`,
+    queued: `waits on the machine of ${member.label}, for an agent that reads its mailbox or for the next session in that directory`,
     "relay-holds": `the relay holds it for ${member.label}, who is offline now`,
     "outbox-holds":
       `waits on this machine for ${member.label}, because the relay does not answer. ` +

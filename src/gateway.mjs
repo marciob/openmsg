@@ -22,6 +22,8 @@ import * as identity from "./identity.mjs";
 import * as directory from "./directory.mjs";
 import * as permissions from "./permissions.mjs";
 import * as published from "./published.mjs";
+import * as places from "./places.mjs";
+import * as projectbox from "./projectbox.mjs";
 import * as inbound from "./inbound.mjs";
 import * as remote from "./remote.mjs";
 import { agentsOfVendor } from "./registry.mjs";
@@ -81,6 +83,9 @@ async function liveAgents(vendor, { maxAgeMs = 5000 } = {}) {
   if (held && Date.now() - held.at < maxAgeMs) return held.rows;
   const rows = await agentsOfVendor(vendor);
   agentCache.set(vendor, { at: Date.now(), rows });
+  // The directory of each session stays on record, for the day that the
+  // session ends and a message for it arrives.
+  places.remember(rows);
   return rows;
 }
 
@@ -110,13 +115,13 @@ function openRow(projectId, agent) {
 // Every row of a project: the sessions that the owner named, and, in an open
 // project, each other session that runs now. A background session, such as a
 // program that uses the SDK, is not a session of a person, and it stays out.
-async function rowsOf(projectId) {
+async function rowsOf(projectId, { maxAgeMs = 5000 } = {}) {
   const rows = published.list(projectId);
   if (!published.isOpen(projectId)) return rows;
   const sessions = new Set(rows.map((r) => r.session));
   const aliases = new Set(rows.map((r) => r.alias));
   for (const vendor of openVendors()) {
-    for (const agent of await liveAgents(vendor)) {
+    for (const agent of await liveAgents(vendor, { maxAgeMs })) {
       if (agent.vendor !== vendor || agent.background) continue;
       // A name that the owner published holds its session and its epoch.
       if (sessions.has(agent.id) || aliases.has(published.aliasOf(agent))) continue;
@@ -138,6 +143,37 @@ async function rowOf(projectId, session, vendorHint = null) {
     if (agent) return published.find(projectId, { alias: published.aliasOf(agent) }) ? null : openRow(projectId, agent);
   }
   return null;
+}
+
+// The places of a project: name -> directory. A place is the directory of a
+// session that the project reaches. In an open project that is each session
+// of an allowed vendor. In another project it is each session that the owner
+// published by name.
+function reached(projectId) {
+  const named = new Set(published.list(projectId).map((r) => r.session));
+  const open = published.isOpen(projectId);
+  const vendors = openVendors();
+  return (row) => named.has(row.id) || (open && vendors.includes(row.vendor));
+}
+
+function placesOf(projectId) {
+  return places.dirs({ allow: reached(projectId) });
+}
+
+// The sessions of a directory that the project reaches and that run now, the
+// most recent first.
+async function sessionsIn(projectId, dir, { except = null, maxAgeMs = 5000 } = {}) {
+  const rows = await rowsOf(projectId, { maxAgeMs });
+  const out = [];
+  for (const vendor of new Set(rows.map((r) => r.vendor))) {
+    // rowsOf asked each vendor a moment ago, so this read costs nothing.
+    for (const agent of await liveAgents(vendor)) {
+      if (agent.id === except || agent.background) continue;
+      if (!rows.some((r) => r.session === agent.id)) continue;
+      if (projectbox.sessionIsIn(agent.cwd, dir)) out.push(agent);
+    }
+  }
+  return out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 }
 
 // The two descriptions of section 9.4 of the spec. Presence is for a person,
@@ -162,6 +198,33 @@ export async function descriptions(projectId) {
       session: row.session,
       epoch: row.epoch,
       live: Boolean(agent),
+    });
+  }
+  // A session that ended stays in the answer while this machine knows its
+  // directory. A sender that still holds its name can write to it, and the
+  // message goes to that directory.
+  const aliases = new Set(routing.map((r) => r.alias));
+  const sessions = new Set(routing.map((r) => r.session));
+  for (const seen of places.sessions({ allow: reached(projectId) })) {
+    const alias = published.aliasOf(seen);
+    if (sessions.has(seen.id) || aliases.has(alias) || !fs.existsSync(seen.dir)) continue;
+    aliases.add(alias);
+    presence.push({ alias: `${alias}@${me.label}`, vendor: seen.vendor, status: "ended" });
+    routing.push({ alias, vendor: seen.vendor, name: seen.name, owner: me.ownerId, project: projectId, session: seen.id, epoch: 1, live: false });
+  }
+  // A place is a row too. Its session id names the place, and no session.
+  for (const [name, dir] of placesOf(projectId)) {
+    const live = (await sessionsIn(projectId, dir)).length > 0;
+    presence.push({ alias: `project:${name}@${me.label}`, vendor: "project", status: live ? "live" : "waits" });
+    routing.push({
+      alias: `project:${name}`,
+      vendor: "project",
+      name,
+      owner: me.ownerId,
+      project: projectId,
+      session: `${places.PLACE}${name}`,
+      epoch: 1,
+      live,
     });
   }
   return { presence, routing };
@@ -305,13 +368,31 @@ export async function release(record, { deliver = deliverLocal, now = Date.now()
   }
   if (!(Date.parse(record.expiresAt) > now)) return stop("expired", `the deadline passed at ${record.expiresAt}`);
 
+  // A target can name a directory. A session there takes the message.
+  if (places.isPlace(record.target.session)) {
+    const name = places.nameOfPlace(record.target.session);
+    const dir = placesOf(record.project).get(name);
+    if (!dir) return stop("not-published", `no directory with the name ${name} is published in this project`);
+    return releaseToPlace(record, { dir, deliver, log, stop });
+  }
+
   const mine = await rowOf(record.project, record.target.session, record.message?.openmsg?.to?.vendor ?? null);
-  if (!mine) return stop("not-published", "that session is not published in this project");
+  if (!mine) {
+    // A session of an open project that ended has no row. Its directory is
+    // on record, and the message goes there.
+    const ended = endedSession(record);
+    if (ended) return releaseToPlace(record, { dir: ended.dir, wasFor: ended, deliver, log, stop });
+    return stop("not-published", "that session is not published in this project");
+  }
   if (record.target.epoch !== mine.epoch) {
     return stop("old-epoch", `the message names epoch ${record.target.epoch}, and the session runs epoch ${mine.epoch}`);
   }
   const agent = (await liveAgents(mine.vendor, { maxAgeMs: 0 })).find((a) => a.id === record.target.session);
-  if (!agent) return stop("session-gone", "that session does not run now");
+  if (!agent) {
+    const ended = endedSession(record, mine);
+    if (ended) return releaseToPlace(record, { dir: ended.dir, wasFor: ended, deliver, log, stop });
+    return stop("session-gone", "that session does not run now");
+  }
 
   let result;
   try {
@@ -325,6 +406,60 @@ export async function release(record, { deliver = deliverLocal, now = Date.now()
   inbound.put({ ...record, status, transport: result.transport });
   log(`${status} ${record.messageId} from ${record.from.label} to ${agent.vendor}:${agent.name}`);
   return { status, messageId: record.messageId, transport: result.transport };
+}
+
+// The session that a message names, when that session ended and this machine
+// still knows its directory. `row` is the published row of that session. With
+// no row, the project must be open, and the vendor must be one that an open
+// project reaches.
+function endedSession(record, row = null) {
+  const seen = places.ofSession(record.target.session);
+  if (!seen || !fs.existsSync(seen.dir)) return null;
+  if (!row && !(published.isOpen(record.project) && openVendors().includes(seen.vendor))) return null;
+  return { alias: row?.alias ?? published.aliasOf(seen), vendor: seen.vendor, session: seen.id, dir: seen.dir };
+}
+
+// The message goes to a directory. A session that runs there takes it now.
+// With no session there, it waits in the box of the directory, and the hook
+// of the next session there gives it to that session.
+async function releaseToPlace(record, { dir, wasFor = null, deliver, log, stop }) {
+  const placed = {
+    place: places.nameOf(dir),
+    wasFor: wasFor ? { alias: wasFor.alias, vendor: wasFor.vendor, session: wasFor.session } : null,
+  };
+  const view = { ...record, placed };
+  const text = remote.render(view);
+  // A session that ended a moment ago must not take the message, so the
+  // gateway asks each vendor again here.
+  const [agent] = await sessionsIn(record.project, dir, { except: wasFor?.session ?? null, maxAgeMs: 0 });
+  if (!agent) {
+    projectbox.put(dir, { ...record.message, rendered: text, placed: { ...placed, dir }, sender: record.from });
+    inbound.put({ ...view, status: "queued", reason: "waits-for-a-session", transport: "project-box" });
+    log(`queued ${record.messageId} from ${record.from.label} in ${dir}: no session runs there`);
+    return { status: "queued", reason: "waits-for-a-session", messageId: record.messageId, transport: "project-box" };
+  }
+  let result;
+  try {
+    result = await deliver(agent, record.message, { text, parts: remote.layoutOf(view) });
+  } catch (e) {
+    return stop("adapter-failed", e.message);
+  }
+  const status = result.delivered ? "adapter-accepted" : "queued";
+  inbound.put({ ...view, status, transport: result.transport, deliveredTo: agent.id });
+  log(`${status} ${record.messageId} from ${record.from.label} to ${agent.vendor}:${agent.name}, in ${placed.place}`);
+  return { status, messageId: record.messageId, transport: result.transport };
+}
+
+// A hook gave a message of the box to a session, and it wrote that state with
+// no word to the sender, because a hook must be fast. The gateway tells the
+// sender here.
+export async function reportPending({ log = () => {} } = {}) {
+  for (const row of inbound.list().filter((r) => r.unreported)) {
+    const told = await reportState(row, row.status).catch((e) => ({ sent: false, why: e.message }));
+    if (!told.sent) continue;
+    inbound.setStatus(row.messageId, row.status, { unreported: false });
+    log(`${row.from.label} knows that ${row.messageId} is ${row.status}`);
+  }
 }
 
 function readBody(req) {
@@ -625,7 +760,9 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal, f
   };
   const holder = await relaylink.keep(url, handlers);
   const timer = setInterval(() => {
-    if (holder.link && !holder.link.closed) flushOutbox(holder.link, { log }).catch(() => {});
+    if (!holder.link || holder.link.closed) return;
+    flushOutbox(holder.link, { log }).catch(() => {});
+    reportPending({ log }).catch(() => {});
   }, flushMs);
   const stop = holder.stop.bind(holder);
   holder.stop = () => {

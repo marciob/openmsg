@@ -18,6 +18,34 @@ import { claudeAgents } from "./registry.mjs";
 import * as mailbox from "./mailbox.mjs";
 import * as projectbox from "./projectbox.mjs";
 import { render, MAX_HOPS } from "./envelope.mjs";
+import * as inbound from "./inbound.mjs";
+
+// A message from another person that waited in the box of a directory. Its
+// deadline can pass while it waits, and then no model reads it. The store of
+// the owner takes the new state, and the gateway tells the sender later,
+// because a hook must be fast.
+function fromAnotherPerson(m) {
+  return m.openmsg?.version === 2;
+}
+
+function takeRemote(m, sessionId) {
+  const late = !(Date.parse(m.openmsg.expiresAt) > Date.now());
+  try {
+    if (inbound.find(m.messageId)) {
+      if (late) inbound.setStatus(m.messageId, "expired", { reason: "expired", unreported: true });
+      else inbound.setStatus(m.messageId, "adapter-accepted", { transport: "project-box", deliveredTo: sessionId, unreported: true });
+    }
+  } catch {
+    // A hook must never stop the agent.
+  }
+  return !late;
+}
+
+// The words that a model reads. A message from another person holds them
+// already, with the name of its owner and the place.
+function textFor(m) {
+  return m.rendered ?? render(m);
+}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -70,7 +98,11 @@ export async function runHook(vendor) {
   const within = (m) => (m.openmsg?.hops?.length ?? 0) <= MAX_HOPS;
 
   if (vendor === "claude") {
-    const taken = projectbox.take(info.cwd).map((t) => t.message).filter(within);
+    const taken = projectbox
+      .take(info.cwd)
+      .map((t) => t.message)
+      .filter(within)
+      .filter((m) => !fromAnotherPerson(m) || takeRemote(m, info.id));
     if (taken.length === 0) return {};
     // The mailbox of a Claude session goes by its name. The session record
     // holds the name, and a reply looks there.
@@ -79,7 +111,7 @@ export async function runHook(vendor) {
     return {
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: taken.map((m) => render(m)).join("\n\n"),
+        additionalContext: taken.map(textFor).join("\n\n"),
       },
     };
   }
@@ -88,13 +120,17 @@ export async function runHook(vendor) {
   register(agent);
 
   const waiting = mailbox.list(agent, { unreadOnly: true }).filter(within);
-  const taken = projectbox.take(info.cwd).map((t) => t.message).filter(within);
+  const taken = projectbox
+    .take(info.cwd)
+    .map((t) => t.message)
+    .filter(within)
+    .filter((m) => !fromAnotherPerson(m) || takeRemote(m, info.id));
   if (waiting.length === 0 && taken.length === 0) return {};
 
   // A project message goes into the mailbox of this session, so a reply finds
   // it there.
   for (const m of taken) mailbox.put(agent, m, "read");
-  const text = [...waiting, ...taken].map((m) => render(m)).join("\n\n");
+  const text = [...waiting, ...taken].map(textFor).join("\n\n");
   mailbox.markRead(agent, waiting.map((m) => m.messageId));
 
   if (vendor === "cursor") {

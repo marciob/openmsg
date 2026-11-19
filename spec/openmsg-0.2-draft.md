@@ -37,13 +37,22 @@ A person reads an alias. The protocol delivers to an identifier.
 ```
 alias:    claude:api-worker@alice
 target:   { owner: <owner id>, project: <project id>, session: <session id>, epoch: <number> }
+
+alias:    project:web-app@alice
+target:   { owner: <owner id>, project: <project id>, session: "place:web-app", epoch: 1 }
 ```
+
+The second alias names a directory of that person, and no session. Section 9
+calls it a place.
 
 Rules:
 
 1. A sender resolves an alias to a target before it sends.
 2. Delivery uses the target only. An alias that moved to another session must
-   never receive the message.
+   never receive the message as its own. A message for a session that ended
+   goes to the directory of that session, under rule 10 of section 9, and the
+   session that reads it there learns that it is not the session of that
+   conversation.
 3. The epoch changes when a session restarts. A message for an old epoch is
    refused, not delivered.
 4. A gateway publishes presence to a person, and signed routing data to an
@@ -363,7 +372,8 @@ Rules:
      session id, the epoch, and the endpoint. It is signed, and an authorized
      peer alone receives it.
 5. Neither description carries the working directory, a socket path, a token, or
-   a raw repository URL.
+   a raw repository URL. The name of a place is the last part of the path of
+   a directory, and the two descriptions carry that name alone.
 6. A gateway asks for routing data with a signed request. The request names the
    owner, the project, the time, and a number that it uses one time. The
    receiver verifies the signature against its directory, and it refuses a
@@ -373,6 +383,34 @@ Rules:
 8. The epoch of a published session counts the moves of one alias. A new
    session under one name takes the next epoch, and a message for the old epoch
    is refused.
+9. A place is the directory of a session that the project reaches: each
+   session that the owner published by name, and, in a project that takes
+   every session, each session of the machine. The gateway keeps the
+   directory of each session that it saw, for 30 days after the last one. The
+   routing data gives one row for each place, with the vendor `project`, the
+   session id `place:<name>`, and the epoch 1. Two directories can end with
+   the same name, and the one with the newest session holds the name then.
+   A message for a place goes to the session of that directory that was
+   active last. With no session there, the message waits in the project box
+   of 0.1, with the state `queued` and the reason `waits-for-a-session`, and
+   the hook of the next session in that directory gives it to that session.
+10. A session ends, and its name ends with it. A message for a session that
+   ended goes to the place of that session, as in rule 9, when this machine
+   still knows that directory. The text for the model then says which session
+   the message was for, and that the reader does not hold that conversation.
+   For a Claude Code session, it also gives the command that opens that
+   conversation again: `claude --resume <session id>`. A session that this
+   machine never saw gets no such path, and the message is refused. The
+   routing data keeps one row for a session that ended, with `live: false`,
+   while the machine knows its directory. A sender that holds the old name
+   therefore still finds its target.
+11. A message that waits in a project box keeps its deadline. The hook gives no
+   message that passed its deadline to a model, and the message takes the
+   state `expired`. A hook must be fast, so it writes the new state and tells
+   nobody. The gateway sends the receipt to the sender later.
+12. `openmsg waiting` shows the owner each message that waits in a box: the
+   sender, the session that it was for, and the directory. It does not show
+   the text of a message from another person.
 
 ## 10. Relation to A2A
 
