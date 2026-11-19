@@ -214,28 +214,52 @@ export async function open(url, handlers = {}) {
 
 // The gateway keeps the connection. A relay that stops, or a network that
 // fails, gives a wait that grows, and the gateway tries again.
-export async function keep(url, handlers = {}) {
+//
+// A connection can also stop with no sign: the relay restarts behind a
+// private network, or its machine sleeps, and no FIN arrives. The gateway
+// then holds a connection that carries nothing, and every message for it
+// waits at the relay. The gateway therefore sends a ping at an interval. A
+// relay that sends no frame for two and a half intervals is gone, and the
+// gateway drops the connection and connects again.
+export const HEARTBEAT_MS = 20_000;
+
+export async function keep(url, handlers = {}, { heartbeatMs = HEARTBEAT_MS } = {}) {
   let link = null;
   let stopped = false;
   let wait = 1000;
+  let beat = null;
   const holder = {
     get link() {
       return link;
     },
     stop() {
       stopped = true;
+      clearInterval(beat);
       link?.close();
     },
+  };
+  const watch = (current) => {
+    let seen = Date.now();
+    current.connection.on("message", () => {
+      seen = Date.now();
+    });
+    clearInterval(beat);
+    beat = setInterval(() => {
+      if (Date.now() - seen > heartbeatMs * 2.5) current.connection.drop();
+      else current.connection.send(JSON.stringify({ type: "ping" }));
+    }, heartbeatMs);
   };
   const again = async () => {
     if (stopped) return;
     try {
       link = await open(url, { ...handlers, onClose: () => {
+        clearInterval(beat);
         handlers.onClose?.();
         link = null;
         if (!stopped) setTimeout(again, wait);
       } });
       wait = 1000;
+      watch(link);
       handlers.onOpen?.(link);
     } catch (e) {
       handlers.onError?.({ error: e.message });

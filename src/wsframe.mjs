@@ -54,6 +54,9 @@ export class Connection extends EventEmitter {
     this.partsOpcode = null;
     this.closed = false;
     socket.on("data", (chunk) => this.read(chunk));
+    // A machine that sleeps, or a network that drops, sends no FIN. The
+    // operating system then asks the other side if it is there.
+    socket.setKeepAlive?.(true, 30_000);
     // "end" arrives when the other side sends FIN. A process that stops gives
     // FIN, and without this line the connection looks alive until the next
     // write fails.
@@ -169,6 +172,13 @@ export class Connection extends EventEmitter {
     if (this.closed) return;
     this.write(OP.close, Buffer.alloc(0));
     this.socket.end();
+    this.end();
+  }
+
+  // The end of a connection that does not answer. A close frame to a side
+  // that is gone waits for nothing, so the socket stops at once.
+  drop() {
+    this.socket.destroy();
     this.end();
   }
 
