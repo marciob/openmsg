@@ -24,6 +24,8 @@ import * as device from "./device.mjs";
 import * as dirsync from "./dirsync.mjs";
 import * as notes from "./notes.mjs";
 import * as webhooks from "./webhooks.mjs";
+import * as mcpagents from "./mcpagents.mjs";
+import * as mcp from "./mcp.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,6 +49,12 @@ const USAGE = `openmsg — messages between AI coding agents
      [--header "Name: value"]       a header that the webhook asks for, such as a key
   openmsg webhook remove <name>     take that agent away
   openmsg webhook list              the agents that wake on an HTTP request
+  openmsg mcp add <name>            name an agent that reads through MCP, such as a chat product
+     [--allow <address>]            an address that it can write to. "*" stands for any text
+     [--per-minute <n>]             how many messages it sends in one minute
+  openmsg mcp remove <name>         take that agent away
+  openmsg mcp list                  the agents that read through MCP
+  openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
   openmsg install --hooks           add the hooks for claude, cursor, and gemini
@@ -356,6 +364,57 @@ async function acknowledgeRead(rows) {
     // because the sender is offline.
     await gateway.reportState(row, "agent-acknowledged").catch(() => {});
   }
+}
+
+async function cmdMcp(args) {
+  // --allow can come more than one time.
+  const allow = [];
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--allow") {
+      if (args[i + 1] === undefined) throw new Error('--allow needs an address, such as "claude:*"');
+      allow.push(args[++i]);
+    } else if (args[i] === "--per-minute" || args[i] === "--as") {
+      i += 1;
+    } else words.push(args[i]);
+  }
+  const [sub, name] = words;
+  if (sub === "serve") {
+    const as = flag(args, "as");
+    if (!as) throw new Error("usage: openmsg mcp serve --as <name>");
+    if (!mcpagents.get(as)) throw new Error(`no agent mcp:${as}. Run: openmsg mcp add ${as}`);
+    await mcp.serve({ name: as });
+    return;
+  }
+  if (sub === "add") {
+    if (!name) throw new Error("usage: openmsg mcp add <name> [--allow <address>] [--per-minute <n>]");
+    const per = flag(args, "per-minute");
+    const row = mcpagents.add(name, { allow, perMinute: per === null ? null : Number(per) });
+    console.log(`mcp:${row.name} reads its mailbox through MCP, and nothing wakes it`);
+    console.log(
+      row.allow.length > 0
+        ? `It can write to: ${row.allow.join(", ")}`
+        : `It can write to nobody yet. Give an address: openmsg mcp add ${row.name} --allow "<address>"`,
+    );
+    console.log(`It sends ${row.perMinute} messages in one minute at most.`);
+    console.log(`The command of its connector: openmsg mcp serve --as ${row.name}`);
+    return;
+  }
+  if (sub === "remove") {
+    if (!name) throw new Error("usage: openmsg mcp remove <name>");
+    console.log(mcpagents.remove(name) ? `mcp:${name} is gone` : `no agent mcp:${name}`);
+    return;
+  }
+  if (sub === undefined || sub === "list") {
+    const rows = mcpagents.agents();
+    if (rows.length === 0) console.log("no agent reads through MCP. Run: openmsg mcp add <name>");
+    for (const a of rows) {
+      const row = mcpagents.get(a.name);
+      console.log(`${address(a)}  writes to: ${row.allow.join(", ") || "nobody"}  ·  ${row.perMinute} in one minute`);
+    }
+    return;
+  }
+  throw new Error("usage: openmsg mcp add <name> | mcp remove <name> | mcp list | mcp serve --as <name>");
 }
 
 function cmdWebhook(args) {
@@ -1136,6 +1195,7 @@ try {
   else if (cmd === "invite") cmdInvite(args);
   else if (cmd === "dir") await cmdDir(args);
   else if (cmd === "webhook") cmdWebhook(args);
+  else if (cmd === "mcp") await cmdMcp(args);
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);
 } catch (e) {

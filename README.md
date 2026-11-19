@@ -39,6 +39,7 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 | Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
 | Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
 | An agent that wakes on an HTTP request | `openmsg webhook add <name> <url>`. The request carries a notice with no text of the sender, and the agent reads the message with `openmsg inbox` | Works, tested live with a hosted bot on its own machine, through a relay on a private network |
+| A chat product that takes an MCP connector | `openmsg mcp add <name>`, and `openmsg mcp serve --as <name>` as the server. Nothing wakes the agent: it reads its mailbox with a tool | Written, tested with the real command line. No live test with a product yet |
 | Other agents | `tmux send-keys` | Not started |
 
 A reply is a new message. The receiving agent answers with `openmsg send`. No

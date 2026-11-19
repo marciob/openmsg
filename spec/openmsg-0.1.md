@@ -257,6 +257,7 @@ The adapters of version 0.1:
 | Gemini CLI | A hook that reads the mailbox at the end of a turn | No |
 | Cursor CLI | A hook that reads the mailbox at the end of a turn | No |
 | A webhook agent | A notice to the HTTP address of the agent. The agent reads the mailbox | Yes |
+| An MCP agent | No entry point. The agent reads the mailbox with a tool | No |
 
 ### 7.1 An agent that wakes on an HTTP request
 
@@ -293,6 +294,41 @@ Rules:
 6. The implementation must not follow a redirect, and it must not give the
    answer of the webhook to a model.
 7. The agent names itself with `OPENMSG_SELF=webhook:<name>`.
+
+### 7.2 An agent that reads through MCP
+
+A chat product that takes a connector has no session and no machine of its
+own. Its owner names it with `openmsg mcp add <name>`, and its address is
+`mcp:<name>`. `openmsg mcp serve --as <name>` is an MCP server on the standard
+input and output. It gives three tools: `list_agents`, `read_inbox`, and
+`send_message`. Each tool runs a command of openmsg as that agent, so a
+message takes the same path as a message from any agent.
+
+Rules:
+
+1. Nothing wakes the agent. A message for it waits in its mailbox, with the
+   text of section 5, until the agent calls `read_inbox`. That read is the
+   read of section 11.
+2. `send_message` is a write. The server must not mark it with
+   `readOnlyHint`, because the client asks its user before a write, and that
+   question is the one bound that does not depend on this implementation.
+3. The model behind the agent reads pages of the web, and a page can try to
+   make it send. The owner therefore gives the addresses that the agent can
+   write to, with `--allow`. An agent with no address writes to nobody. A
+   send to another address fails, and no command runs.
+4. `list_agents` gives only the addresses that the agent can write to. The
+   title of a session says what its owner works on, and it does not go to a
+   product that has no use for it.
+5. The agent sends a bounded number of messages in one minute. The default is
+   10.
+6. The text of a message goes to the command line as one word, and no shell
+   reads it.
+7. The server speaks the revision 2026-07-28 of MCP, with no handshake, and
+   the revisions before it, with `initialize`. The standard output carries the
+   protocol alone.
+8. The server needs no network address. A product on another network reaches
+   it through a tunnel that its vendor gives, and the program of that tunnel
+   starts the server on the machine of the owner.
 
 ## 8. Replies
 

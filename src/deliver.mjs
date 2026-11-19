@@ -31,9 +31,19 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
   if (agent.vendor === "opencode") return opencode.deliver(agent, message, parts ? { layout: parts } : { text });
   if (agent.vendor === "codex") return codex.deliver(agent, message, { text: plain, highlight: parts ? bodyRange(parts) : null });
   if (agent.vendor === "webhook") return wake(agent, message, plain);
-  // An agent with no push entry point, such as Gemini CLI or Cursor CLI, reads
-  // its mailbox at the end of a turn. The message waits there.
-  return { delivered: false, transport: "mailbox" };
+  // An agent with no push entry point reads its mailbox: Gemini CLI and Cursor
+  // CLI at the end of a turn, and an MCP agent when its user asks. The
+  // message waits there, with the text that the model reads. A message from
+  // another person has no other way into that mailbox.
+  keep(agent, message, plain);
+  return { delivered: false, transport: "mailbox", stored: true };
+}
+
+// A message that arrives a second time, before the agent read the first copy,
+// does not go to the mailbox twice.
+function keep(agent, message, rendered) {
+  const waits = mailbox.list(agent, { unreadOnly: true }).some((m) => m.messageId === message.messageId);
+  if (!waits) mailbox.put(agent, { ...message, rendered }, "queued");
 }
 
 // An agent that wakes on an HTTP request. The message goes to the mailbox
@@ -41,10 +51,8 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
 // The agent that wakes therefore always finds the message. `stored` tells the
 // caller that the mailbox holds the message already.
 async function wake(agent, message, rendered) {
-  // A message that arrives a second time, before the agent read the first
-  // copy, does not go to the mailbox twice. The agent still gets a new notice.
-  const waits = mailbox.list(agent, { unreadOnly: true }).some((m) => m.messageId === message.messageId);
-  if (!waits) mailbox.put(agent, { ...message, rendered }, "queued");
+  // The agent gets a new notice for a message that arrives a second time.
+  keep(agent, message, rendered);
   try {
     return { ...(await webhook.deliver(agent, message)), stored: true };
   } catch (e) {

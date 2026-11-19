@@ -6,6 +6,7 @@ import os from "node:os";
 import { execFile } from "node:child_process";
 import { registered } from "./selfregistry.mjs";
 import { agents as webhookAgents } from "./webhooks.mjs";
+import { agents as mcpAgents } from "./mcpagents.mjs";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -437,7 +438,7 @@ export async function allAgents() {
   ]);
   // An agent with no push entry point reports itself from its hook.
   // An agent that wakes on an HTTP request has no session. Its owner named it.
-  return [...claude, ...opencode, ...codex, ...registered(), ...webhookAgents()];
+  return [...claude, ...opencode, ...codex, ...registered(), ...webhookAgents(), ...mcpAgents()];
 }
 
 // Discovery of one vendor. The gateway needs the session of one published
@@ -451,6 +452,7 @@ export async function agentsOfVendor(vendor) {
     return live.length > 0 ? live : codexAgentsFromFiles();
   }
   if (vendor === "webhook") return webhookAgents();
+  if (vendor === "mcp") return mcpAgents();
   return registered();
 }
 
@@ -534,6 +536,10 @@ export async function self() {
     // A webhook agent is in one file, so its lookup asks no vendor.
     if (value.startsWith("webhook:")) {
       const known = webhookAgents().find((a) => `webhook:${a.name}` === value);
+      if (known) return known;
+    }
+    if (value.startsWith("mcp:")) {
+      const known = mcpAgents().find((a) => `mcp:${a.name}` === value);
       if (known) return known;
     }
     try {

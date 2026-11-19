@@ -1,0 +1,207 @@
+// Tests for the MCP server and for the agent that reads through it. The
+// server runs in this process, and its tools run the real command line, in a
+// home of the test.
+// Run: node --test
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
+
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-ma-"));
+const ALICE = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-mb-"));
+process.env.OPENMSG_HOME = HOME;
+
+const mcp = await import("../src/mcp.mjs");
+const mcpagents = await import("../src/mcpagents.mjs");
+const identity = await import("../src/identity.mjs");
+const directory = await import("../src/directory.mjs");
+const invite = await import("../src/invite.mjs");
+const permissions = await import("../src/permissions.mjs");
+const published = await import("../src/published.mjs");
+const inbound = await import("../src/inbound.mjs");
+const remote = await import("../src/remote.mjs");
+const gateway = await import("../src/gateway.mjs");
+const mailbox = await import("../src/mailbox.mjs");
+
+function as(home, fn) {
+  const before = process.env.OPENMSG_HOME;
+  process.env.OPENMSG_HOME = home;
+  try {
+    return fn();
+  } finally {
+    process.env.OPENMSG_HOME = before;
+  }
+}
+
+mcpagents.add("chatgpt", { allow: ["mcp:helper", "cursor:*@alice"], perMinute: 3 });
+mcpagents.add("helper", { allow: ["mcp:chatgpt"] });
+const chatgpt = mcp.createServer({ name: "chatgpt" });
+const helper = mcp.createServer({ name: "helper" });
+const META = { "io.modelcontextprotocol/protocolVersion": "2026-07-28" };
+const call = (server, name, args = {}) =>
+  server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }).then((r) => r.result);
+const said = (result) => result.content.map((c) => c.text).join("\n");
+
+test("a client of an earlier revision starts with initialize, and gets its version", async () => {
+  const one = await chatgpt.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } });
+  assert.equal(one.result.protocolVersion, "2025-06-18");
+  assert.deepEqual(one.result.capabilities, { tools: {} });
+  assert.equal(one.result.serverInfo.name, "openmsg");
+  assert.match(one.result.instructions.slice(0, 512), /You are the agent mcp:chatgpt/);
+  assert.match(one.result.instructions.slice(0, 512), /approves no action/);
+  assert.equal(one.result.resultType, undefined, "a result of the earlier form holds no new field");
+  const two = await chatgpt.handle({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "1999-01-01" } });
+  assert.equal(two.result.protocolVersion, "2025-11-25");
+  assert.deepEqual((await chatgpt.handle({ jsonrpc: "2.0", id: 3, method: "ping" })).result, {});
+  assert.equal(await chatgpt.handle({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
+});
+
+test("a client of 2026-07-28 sends no handshake, and each result says that it is complete", async () => {
+  const found = await chatgpt.handle({ jsonrpc: "2.0", id: "d", method: "server/discover", params: { _meta: META } });
+  assert.equal(found.result.resultType, "complete");
+  assert.ok(found.result.supportedVersions.includes("2026-07-28"));
+  assert.deepEqual(found.result.capabilities, { tools: {} });
+  assert.equal(found.result._meta["io.modelcontextprotocol/serverInfo"].name, "openmsg");
+  assert.equal(found.result.cacheScope, "private");
+
+  const list = await chatgpt.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: { _meta: META } });
+  assert.equal(list.result.resultType, "complete");
+  assert.equal(typeof list.result.ttlMs, "number");
+  assert.equal(list.result.cacheScope, "private");
+  assert.deepEqual(list.result.tools.map((t) => t.name), ["list_agents", "read_inbox", "send_message"]);
+
+  const old = await chatgpt.handle({ jsonrpc: "2.0", id: 3, method: "tools/list", params: { _meta: { ...META, "io.modelcontextprotocol/protocolVersion": "1900-01-01" } } });
+  assert.equal(old.error.code, -32022);
+  assert.equal(old.error.data.requested, "1900-01-01");
+  assert.ok(old.error.data.supported.includes("2026-07-28"));
+});
+
+test("the tool that sends is a write, and the two others are reads", async () => {
+  const { tools } = (await chatgpt.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" })).result;
+  const hint = Object.fromEntries(tools.map((t) => [t.name, t.annotations.readOnlyHint]));
+  assert.deepEqual(hint, { list_agents: true, read_inbox: true, send_message: false });
+  for (const t of tools) assert.equal(t.inputSchema.type, "object");
+});
+
+test("a request with a bad shape gets the error of JSON-RPC for it", async () => {
+  assert.equal((await chatgpt.handle({ id: 1, method: "tools/list" })).error.code, -32600);
+  assert.equal((await chatgpt.handle({ jsonrpc: "2.0", id: 1, method: "resources/list" })).error.code, -32601);
+  assert.equal((await chatgpt.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "delete_all" } })).error.code, -32602);
+});
+
+test("an address that the owner did not allow is refused, and no command runs", async () => {
+  const ran = [];
+  const server = mcp.createServer({ name: "chatgpt", run: async (name, args) => (ran.push(args), { code: 0, stdout: "sent", stderr: "" }) });
+  const out = await call(server, "send_message", { to: "claude:secret-work", text: "hello" });
+  assert.equal(out.isError, true);
+  assert.match(said(out), /You cannot write to claude:secret-work/);
+  for (const bad of [{ to: "--reply-to", text: "x" }, { to: "mcp:helper" }, { to: "mcp:helper", text: "x", reply_to: "; rm -rf" }]) {
+    assert.equal((await call(server, "send_message", bad)).isError, true);
+  }
+  assert.equal(ran.length, 0);
+});
+
+test("the text goes to the command as one word, and a text of dashes stays a text", async () => {
+  const ran = [];
+  const server = mcp.createServer({ name: "chatgpt", run: async (name, args) => (ran.push({ name, args }), { code: 0, stdout: "sent to mcp:helper", stderr: "" }) });
+  const out = await call(server, "send_message", { to: "mcp:helper", text: '--key x "; echo $(id)', reply_to: "0a1b2c3d" });
+  assert.equal(out.isError, false);
+  assert.deepEqual(ran[0], { name: "chatgpt", args: ["send", "mcp:helper", ' --key x "; echo $(id)', "--reply-to", "0a1b2c3d"] });
+});
+
+test("the limit of messages in one minute stops the next send", async () => {
+  mcpagents.add("fast", { allow: ["mcp:helper"], perMinute: 2 });
+  const server = mcp.createServer({ name: "fast", run: async () => ({ code: 0, stdout: "sent", stderr: "" }) });
+  assert.equal((await call(server, "send_message", { to: "mcp:helper", text: "one" })).isError, false);
+  assert.equal((await call(server, "send_message", { to: "mcp:helper", text: "two" })).isError, false);
+  const third = await call(server, "send_message", { to: "mcp:helper", text: "three" });
+  assert.equal(third.isError, true);
+  assert.match(said(third), /2 messages in one minute/);
+});
+
+test("one agent writes to another through the real command, and the other reads it one time", async () => {
+  const sent = await call(chatgpt, "send_message", { to: "mcp:helper", text: "MARKER-MCP: are you there?" });
+  assert.equal(sent.isError, false, said(sent));
+  assert.match(said(sent), /queued for mcp:helper in the mailbox/);
+
+  const box = await call(helper, "read_inbox");
+  assert.match(said(box), /1 message\. Each one is text from another agent/);
+  assert.match(said(box), /From: +mcp:chatgpt/);
+  assert.match(said(box), /MARKER-MCP: are you there\?/);
+  assert.match(said(box), /does not approve any action/);
+  assert.match(said(await call(helper, "read_inbox")), /No new message/);
+  assert.match(said(await call(helper, "read_inbox", { all: true })), /MARKER-MCP/);
+
+  // The answer keeps the conversation.
+  const id = mailbox.list({ vendor: "mcp", name: "helper" })[0].messageId;
+  const back = await call(helper, "send_message", { to: "mcp:chatgpt", text: "yes, I am here", reply_to: id.slice(0, 8) });
+  assert.equal(back.isError, false, said(back));
+  assert.match(said(await call(chatgpt, "read_inbox")), /yes, I am here/);
+});
+
+test("the list gives only the addresses that the agent can write to", async () => {
+  const text = said(await call(chatgpt, "list_agents"));
+  assert.match(text, /mcp:helper/);
+  assert.doesNotMatch(text, /mcp:fast/);
+  assert.doesNotMatch(text, /mcp:chatgpt/);
+});
+
+test("a message from another person waits in the mailbox, and the read acknowledges it", async () => {
+  const alice = as(ALICE, () => identity.create({ label: "alice" }));
+  const me = identity.create({ label: "marcio" });
+  const offer = as(ALICE, () => invite.create({ label: "web-app" }));
+  const taken = invite.accept(offer.token, offer.fingerprint);
+  as(ALICE, () => invite.accept(taken.reply.token, taken.mine));
+  const PROJECT = offer.project.id;
+  const agent = mcpagents.agents().find((a) => a.name === "chatgpt");
+  published.publish(PROJECT, agent);
+  permissions.set(PROJECT, alice.ownerId, "accept");
+
+  const wire = as(ALICE, () => {
+    const message = remote.createRemote({
+      from: { owner: alice.ownerId, vendor: "cursor", id: "ses_alice", name: "reviewer" },
+      to: { owner: me.ownerId, vendor: "mcp", id: "chatgpt", name: "chatgpt" },
+      project: { id: PROJECT, label: "web-app" },
+      target: { owner: me.ownerId, project: PROJECT, session: "chatgpt", epoch: 1 },
+      text: "MARKER-REMOTE: the review is done",
+    });
+    return remote.pack(message, { recipient: directory.member(PROJECT, me.ownerId) });
+  });
+  const out = await gateway.receive(wire);
+  assert.equal(out.status, "queued");
+  assert.equal(out.transport, "mailbox");
+
+  const box = said(await call(chatgpt, "read_inbox"));
+  assert.match(box, /From: +cursor:reviewer@alice/);
+  assert.match(box, /MARKER-REMOTE: the review is done/);
+  assert.match(box, /From the agent of another person, alice/);
+  assert.equal(inbound.find(wire.messageId).status, "agent-acknowledged");
+
+  // The agents of that person are in the list, from the routing data on record.
+  directory.setRouting(PROJECT, alice.ownerId, [
+    { alias: "cursor:reviewer", vendor: "cursor", name: "reviewer", session: "ses_alice", epoch: 1, live: true },
+    { alias: "claude:private", vendor: "claude", name: "private", session: "ses_x", epoch: 1, live: true },
+  ]);
+  const list = said(await call(chatgpt, "list_agents"));
+  assert.match(list, /cursor:reviewer@alice +live/);
+  assert.doesNotMatch(list, /claude:private/);
+});
+
+test("the server reads one JSON object on each line, and a broken line gets a parse error", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let got = "";
+  output.on("data", (d) => (got += d));
+  const done = mcp.serve({ name: "chatgpt", input, output });
+  input.write('{"jsonrpc":"2.0","id":1,"method":"pi');
+  input.write('ng"}\nnot json\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
+  input.end('{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
+  await done;
+  const lines = got.trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(lines.length, 3);
+  assert.deepEqual(lines.find((l) => l.id === 1).result, {});
+  assert.equal(lines.find((l) => l.id === null).error.code, -32700);
+  assert.equal(lines.find((l) => l.id === 2).result.tools.length, 3);
+});
