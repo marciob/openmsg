@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { registered } from "./selfregistry.mjs";
+import { agents as webhookAgents } from "./webhooks.mjs";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -435,7 +436,8 @@ export async function allAgents() {
     codexAgents(),
   ]);
   // An agent with no push entry point reports itself from its hook.
-  return [...claude, ...opencode, ...codex, ...registered()];
+  // An agent that wakes on an HTTP request has no session. Its owner named it.
+  return [...claude, ...opencode, ...codex, ...registered(), ...webhookAgents()];
 }
 
 // Discovery of one vendor. The gateway needs the session of one published
@@ -448,6 +450,7 @@ export async function agentsOfVendor(vendor) {
     const live = await codexAgents();
     return live.length > 0 ? live : codexAgentsFromFiles();
   }
+  if (vendor === "webhook") return webhookAgents();
   return registered();
 }
 
@@ -528,6 +531,11 @@ export async function self() {
   // reply that pins the session id of the sender fails.
   if (process.env.OPENMSG_SELF) {
     const value = process.env.OPENMSG_SELF;
+    // A webhook agent is in one file, so its lookup asks no vendor.
+    if (value.startsWith("webhook:")) {
+      const known = webhookAgents().find((a) => `webhook:${a.name}` === value);
+      if (known) return known;
+    }
     try {
       return await findAgent(value);
     } catch {

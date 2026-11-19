@@ -23,6 +23,7 @@ import * as limits from "./limits.mjs";
 import * as device from "./device.mjs";
 import * as dirsync from "./dirsync.mjs";
 import * as notes from "./notes.mjs";
+import * as webhooks from "./webhooks.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,6 +42,9 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg waiting                   the project messages that wait for a session
   openmsg inbox [--json] [--all]    show the messages for this agent
   openmsg whoami                    show how this agent is addressed
+  openmsg webhook add <name> <url>  name an agent that wakes on an HTTP request
+  openmsg webhook remove <name>     take that agent away
+  openmsg webhook list              the agents that wake on an HTTP request
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
   openmsg install --hooks           add the hooks for claude, cursor, and gemini
@@ -208,10 +212,14 @@ async function cmdSend(target, text, replyTo = null, args = []) {
   // "delivered" means an adapter pushed the message into the live session.
   // "queued" means it waits in the mailbox for an agent that reads it at the
   // end of a turn.
-  mailbox.put(to, message, result.delivered ? "delivered" : "queued");
+  // The adapter of a webhook agent writes the mailbox before it sends its
+  // notice, so the agent that wakes finds the message.
+  if (!result.stored) mailbox.put(to, message, result.delivered ? "delivered" : "queued");
   const how = result.delivered
     ? `sent to ${address(to)} over ${result.transport}`
-    : `queued for ${address(to)} in the mailbox. That agent reads it at the end of its next turn`;
+    : result.detail
+      ? `queued for ${address(to)} in the mailbox, because ${result.detail}. That agent reads it at its next check`
+      : `queued for ${address(to)} in the mailbox. That agent reads it at the end of its next turn`;
   console.log(`${how} (${message.messageId})`);
 }
 
@@ -304,11 +312,56 @@ async function cmdInbox(args) {
       console.log("no messages");
     } else {
       for (const r of rows) {
-        console.log(`from ${address(r.openmsg.from)} at ${r.createdAt}\n${r.parts.map((p) => p.text).join("\n")}\n`);
+        // A message for a webhook agent holds the text that a model reads: the
+        // header, the text of the sender, and the notice after it. A session
+        // of another vendor got those words from its adapter.
+        if (r.rendered) console.log(`${r.rendered}\n`);
+        else console.log(`from ${address(r.openmsg.from)} at ${r.createdAt}\n${r.parts.map((p) => p.text).join("\n")}\n`);
       }
     }
   }
   mailbox.markRead(me, rows.map((r) => r.messageId));
+  await acknowledgeRead(rows);
+}
+
+// A read of the mailbox is an event from the agent, and rule 1 of section 8
+// of the spec of 0.2 gives it the state "agent-acknowledged". Only a message
+// from another person has a row in that store.
+async function acknowledgeRead(rows) {
+  for (const r of rows) {
+    if (r.openmsg?.version !== remote.VERSION) continue;
+    const row = inbound.find(r.messageId);
+    if (!row || !["queued", "adapter-accepted"].includes(row.status)) continue;
+    inbound.setStatus(row.messageId, "agent-acknowledged");
+    // The sender learns the state when a way to it exists. A read never fails
+    // because the sender is offline.
+    await gateway.reportState(row, "agent-acknowledged").catch(() => {});
+  }
+}
+
+function cmdWebhook(args) {
+  const [sub, name, url] = args;
+  if (sub === "add") {
+    if (!name || !url) throw new Error("usage: openmsg webhook add <name> <url>");
+    const row = webhooks.add(name, url);
+    console.log(`webhook:${row.name} wakes on a request to the address that you gave`);
+    console.log("That address is a secret. A person who holds it can wake the agent, and cannot write to it.");
+    console.log(`The agent names itself with: export OPENMSG_SELF=webhook:${row.name}`);
+    return;
+  }
+  if (sub === "remove") {
+    if (!name) throw new Error("usage: openmsg webhook remove <name>");
+    console.log(webhooks.remove(name) ? `webhook:${name} is gone` : `no agent webhook:${name}`);
+    return;
+  }
+  if (sub === undefined || sub === "list") {
+    const rows = webhooks.agents();
+    if (rows.length === 0) console.log("no agent wakes on an HTTP request. Run: openmsg webhook add <name> <url>");
+    // The host shows which service takes the notice. The path holds the secret.
+    for (const a of rows) console.log(`${address(a)}  ${new URL(a.transport.url).host}`);
+    return;
+  }
+  throw new Error("usage: openmsg webhook add <name> <url> | webhook remove <name> | webhook list");
 }
 
 // --- version 0.2: identity, invitations, and the directory ----------------
@@ -1001,6 +1054,7 @@ try {
   else if (cmd === "id") cmdId(args);
   else if (cmd === "invite") cmdInvite(args);
   else if (cmd === "dir") await cmdDir(args);
+  else if (cmd === "webhook") cmdWebhook(args);
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);
 } catch (e) {

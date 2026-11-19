@@ -38,6 +38,7 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 | OpenCode | 2.x: `POST /api/session/{id}/prompt` on the shared service, with the password from `~/.local/state/opencode/service.json`. 1.x: `POST /session/{id}/prompt_async` | Works both ways, tested live with 2.2.6 |
 | Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
 | Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
+| An agent that wakes on an HTTP request | `openmsg webhook add <name> <url>`. The request carries a notice with no text of the sender, and the agent reads the message with `openmsg inbox` | Written, tested with a local HTTP server. No live test yet |
 | Other agents | `tmux send-keys` | Not started |
 
 A reply is a new message. The receiving agent answers with `openmsg send`. No

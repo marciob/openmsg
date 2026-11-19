@@ -279,9 +279,11 @@ Rules:
 1. A message reaches `agent-acknowledged` only through an acknowledgement event
    from the agent, for example a hook at the end of a turn, or a read of the
    mailbox. A receipt from a transport never proves that a model read a message.
-   Two events give a state today. The agent runs `openmsg ack <id>`, and that
+   Three events give a state today. The agent runs `openmsg ack <id>`, and that
    id is inside the text of the message. Or the agent answers with
-   `--reply-to <id>`, and the message takes the state `replied`. The receiver
+   `--reply-to <id>`, and the message takes the state `replied`. Or the agent
+   reads the message with `openmsg inbox`: an agent that wakes on an HTTP
+   request has no other way to read it. The receiver
    tells the sender each new state with a signed receipt, over the relay or
    over the direct address.
 2. The receiver writes the message to a durable store before it acknowledges.

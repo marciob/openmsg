@@ -47,7 +47,8 @@ An address has two parts, divided by a colon:
 ```
 
 - `vendor` is a lowercase name of the agent program: `claude`, `codex`,
-  `opencode`, `gemini`, `cursor`.
+  `opencode`, `gemini`, `cursor`. The vendor `webhook` names an agent that
+  wakes on an HTTP request, and section 7.1 describes it.
 - `name` is the name of the session. It comes from the vendor when the vendor
   gives one. If the vendor gives no name, the adapter makes one from the
   directory of the session and the last four characters of the session id.
@@ -255,6 +256,41 @@ The adapters of version 0.1:
 | OpenCode | Version 2: `POST /api/session/{id}/prompt` on the shared service. Version 1: `POST /session/{id}/prompt_async` | Yes |
 | Gemini CLI | A hook that reads the mailbox at the end of a turn | No |
 | Cursor CLI | A hook that reads the mailbox at the end of a turn | No |
+| A webhook agent | A notice to the HTTP address of the agent. The agent reads the mailbox | Yes |
+
+### 7.1 An agent that wakes on an HTTP request
+
+Some agents run on a machine of their own, and they have no session that
+another program can write to. Such an agent gives its owner one HTTP address,
+and a request to that address starts a turn of the agent. The owner names the
+agent with `openmsg webhook add <name> <url>`, and its address is
+`webhook:<name>`. The name is also the session id.
+
+Rules:
+
+1. The address of the webhook is a secret. An implementation must keep it in a
+   file that only the owner reads. It must not be in the output of `list`, in
+   the routing data, or in the text of an error.
+2. The request must carry a notice, and it must not carry the text of the
+   sender. A person who learns the address can send a request of their own.
+   With a notice alone, that request wakes the agent, and the agent finds an
+   empty mailbox.
+3. The notice holds four fields: `openmsg` with the value `message-waiting`,
+   `agent` with the address of the agent, `messageId`, and `text` with one
+   fixed sentence that names the command `openmsg inbox`. The sender chooses
+   the id of a message. The field `messageId` is therefore `null` when the id
+   does not have the shape of a UUID.
+4. The implementation must write the message to the mailbox before it sends
+   the notice. The mailbox holds the text of section 5, and `openmsg inbox`
+   gives that text to the agent.
+5. A notice that fails loses no message. The receipt then says `delivered:
+   false` and the transport `mailbox`, and the agent reads the message at its
+   next check. This is the one case where a failed entry point does not fail
+   the delivery, because the mailbox is the entry point and the notice is a
+   signal.
+6. The implementation must not follow a redirect, and it must not give the
+   answer of the webhook to a model.
+7. The agent names itself with `OPENMSG_SELF=webhook:<name>`.
 
 ## 8. Replies
 

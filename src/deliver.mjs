@@ -4,6 +4,8 @@
 import * as claude from "./adapters/claude.mjs";
 import * as opencode from "./adapters/opencode.mjs";
 import * as codex from "./adapters/codex.mjs";
+import * as webhook from "./adapters/webhook.mjs";
+import * as mailbox from "./mailbox.mjs";
 import { layoutOf, compose, bodyRange } from "./envelope.mjs";
 
 // `parts` is the layout of the text that the model reads: the frame and the text
@@ -28,7 +30,26 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
   }
   if (agent.vendor === "opencode") return opencode.deliver(agent, message, parts ? { layout: parts } : { text });
   if (agent.vendor === "codex") return codex.deliver(agent, message, { text: plain, highlight: parts ? bodyRange(parts) : null });
+  if (agent.vendor === "webhook") return wake(agent, message, plain);
   // An agent with no push entry point, such as Gemini CLI or Cursor CLI, reads
   // its mailbox at the end of a turn. The message waits there.
   return { delivered: false, transport: "mailbox" };
+}
+
+// An agent that wakes on an HTTP request. The message goes to the mailbox
+// first, with the text that the model reads, and the request goes after it.
+// The agent that wakes therefore always finds the message. `stored` tells the
+// caller that the mailbox holds the message already.
+async function wake(agent, message, rendered) {
+  // A message that arrives a second time, before the agent read the first
+  // copy, does not go to the mailbox twice. The agent still gets a new notice.
+  const waits = mailbox.list(agent, { unreadOnly: true }).some((m) => m.messageId === message.messageId);
+  if (!waits) mailbox.put(agent, { ...message, rendered }, "queued");
+  try {
+    return { ...(await webhook.deliver(agent, message)), stored: true };
+  } catch (e) {
+    // A notice that failed loses no message. The message waits in the mailbox,
+    // and the agent reads it at its next check.
+    return { delivered: false, transport: "mailbox", stored: true, detail: e.message };
+  }
 }
