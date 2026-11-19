@@ -426,11 +426,24 @@ async function cmdSendRemote(target, text, replyTo, args) {
     );
   }
   const receipts = [];
-  const link = direct ? null : await relaylink.open(relayUrl, { onReceipt: (frame) => receipts.push(frame) });
+  // A relay that does not answer is not the end of a message. The machine of
+  // the relay can sleep, and the message then waits in the outbox of this
+  // machine, with the routing data that this machine read before.
+  let link = null;
+  let unreachable = null;
+  if (!direct) {
+    try {
+      link = await relaylink.open(relayUrl, { onReceipt: (frame) => receipts.push(frame) });
+    } catch (e) {
+      unreachable = e.message;
+    }
+  }
 
   let rows;
   let label = member.label;
+  let fromCache = false;
   try {
+    if (unreachable) throw new Error(unreachable);
     const answer = direct
       ? await gateway.routingOf(member, project)
       : await gateway.routingOverRelay(link, member, project);
@@ -448,6 +461,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
     console.error(`openmsg: ${e.message}`);
     console.error(`openmsg: using the routing data of ${cached.at}`);
     rows = cached.rows;
+    fromCache = true;
   }
 
   const row = rows.find((r) => r.alias === alias || r.name === alias || r.session === alias);
@@ -472,6 +486,8 @@ async function cmdSendRemote(target, text, replyTo, args) {
     replyTo: answered?.messageId ?? null,
     hops: answered?.message?.openmsg?.hops ?? [],
     workspace: remote.workspaceOf(),
+    // The sender knows here that the message will wait.
+    ttlMs: fromCache || row.live === false ? remote.WAIT_TTL_MS : remote.DEFAULT_TTL_MS,
   });
   const wire = remote.pack(message, { recipient: member, sealTo });
   const how = {
@@ -479,23 +495,40 @@ async function cmdSendRemote(target, text, replyTo, args) {
     held: `waits for ${member.label} to accept you`,
     queued: `waits in the mailbox of ${member.label}`,
     "relay-holds": `the relay holds it for ${member.label}, who is offline now`,
+    "outbox-holds":
+      `waits on this machine for ${member.label}, because the relay does not answer. ` +
+      "Your gateway sends it when the relay answers. See it: openmsg outbox",
   };
+  const row0 = { messageId: message.messageId, to: member.ownerId, project, alias: `${alias}@${label}`, wire };
   let out;
   if (direct) {
     out = await gateway.send(member, wire);
+  } else if (!link) {
+    outbox.put({ ...row0, state: "queued", pending: true });
+    out = { status: "outbox-holds" };
   } else {
     // The sender keeps its copy until a receipt arrives. The relay keeps its
     // own copy at the same time.
-    outbox.put({ messageId: message.messageId, to: member.ownerId, project, alias: `${alias}@${label}`, wire, state: "sending" });
+    outbox.put({ ...row0, state: "sending" });
     const answer = await link.send(wire);
-    if (answer.type !== "stored") {
+    if (answer.type !== "stored" && gateway.RELAY_GONE.includes(answer.reason)) {
+      // The connection stopped before the relay said that it holds the message.
+      outbox.setState(message.messageId, "queued", { pending: true });
+      link.close();
+      link = null;
+      out = { status: "outbox-holds" };
+    } else if (answer.type !== "stored") {
       outbox.setState(message.messageId, "refused", { reason: answer.reason });
       link.close();
       console.log(`refused by the relay: ${answer.reason} (${message.messageId})`);
       process.exitCode = 1;
       return;
     }
+  }
+  if (link) {
     outbox.setState(message.messageId, "queued");
+    // A message that waited here from an earlier try goes on the same connection.
+    await gateway.flushOutbox(link).catch(() => {});
     // A receipt says what happened at the other end. It can arrive in a
     // moment, or days later, and then the gateway of this owner takes it.
     const receipt = await waitForReceipt(receipts, message.messageId, 3000);
@@ -675,7 +708,8 @@ function cmdOutbox(args) {
     return;
   }
   for (const r of rows) {
-    console.log(`${r.messageId.slice(0, 8)}  ${String(r.state).padEnd(16)} to ${r.alias ?? r.to}  ${r.at}`);
+    const where = r.pending ? "  (on this machine, the relay did not answer)" : "";
+    console.log(`${r.messageId.slice(0, 8)}  ${String(r.state).padEnd(16)} to ${r.alias ?? r.to}  ${r.at}${where}`);
   }
 }
 

@@ -537,10 +537,51 @@ export async function syncDirectory(link, { log = () => {}, projects = [] } = {}
   return out;
 }
 
+// The two answers of a connection that stopped. They say nothing about the
+// message, so the message stays with the sender.
+export const RELAY_GONE = ["the relay closed the connection", "the relay did not answer"];
+
+// The messages that wait in the outbox of this machine, because the relay did
+// not answer when the agent sent them. Each one goes to the relay now. A
+// message that passed its deadline does not go.
+let flushing = false;
+export async function flushOutbox(link, { log = () => {}, now = Date.now() } = {}) {
+  if (flushing) return { sent: 0 };
+  flushing = true;
+  let sent = 0;
+  try {
+    for (const row of outbox.list().filter((r) => r.pending && r.wire)) {
+      if (!(Date.parse(row.wire.expiresAt) > now)) {
+        outbox.setState(row.messageId, "expired", { pending: false, reason: "expired" });
+        log(`${row.messageId} passed its deadline in the outbox`);
+        continue;
+      }
+      const answer = await link.send(row.wire);
+      if (answer.type === "stored") {
+        outbox.setState(row.messageId, "queued", { pending: false });
+        sent += 1;
+        log(`sent ${row.messageId} to ${row.alias ?? row.to} from the outbox`);
+      } else if (RELAY_GONE.includes(answer.reason)) {
+        break;
+      } else {
+        outbox.setState(row.messageId, "refused", { pending: false, reason: answer.reason });
+        log(`the relay refused ${row.messageId} from the outbox: ${answer.reason}`);
+      }
+    }
+  } finally {
+    flushing = false;
+  }
+  return { sent };
+}
+
+// How often a gateway looks at its outbox while the relay answers. An agent
+// can fail to reach the relay while the connection of the gateway holds.
+export const FLUSH_MS = 30_000;
+
 // The gateway holds one connection to the relay of its team. The relay pushes
 // a message into it, and the gateway answers with the state that the message
 // reached here.
-export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } = {}) {
+export async function joinRelay(url, { log = () => {}, deliver = deliverLocal, flushMs = FLUSH_MS } = {}) {
   // Every handler takes the link from its own call. The relay pushes the
   // waiting messages the moment the connection opens, before the caller of
   // keep() holds anything.
@@ -549,6 +590,7 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } 
       log(`relay ${url}: connected as ${link.owner}, ${link.welcome?.waiting ?? 0} waiting`);
       // The directory travels on the same connection, at each start.
       syncDirectory(link, { log }).catch((e) => log(`the directory did not travel: ${e.message}`));
+      flushOutbox(link, { log }).catch((e) => log(`the outbox did not go: ${e.message}`));
     },
     onClose: () => log(`relay ${url}: the connection closed`),
     onError: (e) => log(`relay ${url}: ${e.error}`),
@@ -581,7 +623,16 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal } 
       );
     },
   };
-  return relaylink.keep(url, handlers);
+  const holder = await relaylink.keep(url, handlers);
+  const timer = setInterval(() => {
+    if (holder.link && !holder.link.closed) flushOutbox(holder.link, { log }).catch(() => {});
+  }, flushMs);
+  const stop = holder.stop.bind(holder);
+  holder.stop = () => {
+    clearInterval(timer);
+    stop();
+  };
+  return holder;
 }
 
 export async function send(member, wire, { timeoutMs = 30_000 } = {}) {

@@ -233,7 +233,10 @@ Rules:
    sender, and it is never evidence about the checkout of the receiver. The
    receiving agent must read it as "the other person saw this".
 3. `expiresAt` is a deadline. After it passes, the receiver refuses the message,
-   whatever the state of the target.
+   whatever the state of the target. The deadline of this implementation is
+   15 minutes. A message that the sender knows will wait takes 24 hours: the
+   relay does not answer, the gateway of the receiver is offline, or the
+   target does not run now.
 
 A message travels in two parts:
 
@@ -295,7 +298,13 @@ Rules:
    sender, with different content. The receiver refuses the new arrival, keeps
    the record of the first message, and reports the event. A receiver must never
    rewrite the history of a delivery that already happened.
-5. Retries are bounded.
+5. Retries are bounded. A sender that cannot reach the relay keeps the
+   message in its own outbox, when it holds routing data for the target from
+   an earlier answer. Its gateway sends the message when the relay answers
+   again, and it looks at the outbox each 30 seconds while the connection
+   holds. A message that passed its deadline in the outbox does not go, and
+   it takes the state `expired`. A sender with no routing data cannot seal the
+   message, and the send fails.
 6. An expiry stops an injection that did not happen yet. It does not undo work
    that an agent already started.
 7. openmsg does not promise that a message runs exactly one time. A crash

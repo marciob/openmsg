@@ -248,11 +248,15 @@ export function connect(url, { timeoutMs = 10_000, tls: tlsOptions = {}, socketP
       : socketPath
         ? net.createConnection(socketPath)
         : net.createConnection({ host: address.hostname, port });
+    let timer = null;
     const fail = (e) => {
+      // A timer that stays keeps the process of a command alive for its whole
+      // length, after the answer is already known.
+      clearTimeout(timer);
       socket.destroy();
       reject(new Error(`the server at ${socketPath ?? url} did not answer: ${e.message}`));
     };
-    const timer = setTimeout(() => fail(new Error("timeout")), timeoutMs);
+    timer = setTimeout(() => fail(new Error("timeout")), timeoutMs);
     socket.once("error", fail);
     socket.on(secure ? "secureConnect" : "connect", () => {
       socket.write(

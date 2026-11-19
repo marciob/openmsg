@@ -27,6 +27,10 @@ export const VERSION = 2;
 // A message that waits too long says little. The deadline stops an injection
 // that did not happen yet, and it does not undo work that started.
 export const DEFAULT_TTL_MS = 15 * 60 * 1000;
+// A message that the sender knows will wait takes a longer deadline: the
+// relay does not answer, the gateway of the receiver is offline, or the
+// session does not run now. A machine that sleeps for a night still takes it.
+export const WAIT_TTL_MS = 24 * 3600 * 1000;
 
 // An error of this module carries a reason. The gateway of phase 3 turns a
 // reason into a state: refused, held, or expired.
