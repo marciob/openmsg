@@ -636,8 +636,21 @@ export async function routingOverRelay(link, member, projectId) {
   if (!first) {
     throw new Error(`${member.label ?? member.ownerId}: ${faults[0] ?? "no machine of that person answered"}`);
   }
-  directory.setRouting(projectId, member.ownerId, rows);
-  return { ...first, routing: rows };
+  const unique = uniqueRows(rows);
+  directory.setRouting(projectId, member.ownerId, unique);
+  return { ...first, routing: unique };
+}
+
+// One machine can hold two connections to the relay, and then it answers two
+// times. A row is one alias, one session, and one machine key.
+export function uniqueRows(rows) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = JSON.stringify([row.alias, row.session, row.epoch, row.sealTo ?? null]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // The directory of section 12.1: this owner publishes its own records, and it

@@ -131,7 +131,7 @@ export function createServer({ name, run = runCli } = {}) {
       for (const member of Object.values(project.members ?? {})) {
         for (const row of member.routing?.rows ?? []) {
           const address = `${row.alias}@${member.label}`;
-          if (!mcpagents.allows(me.allow, address)) continue;
+          if (!mcpagents.allows(me.allow, address) || rows.some((r) => r.startsWith(`${address}  `))) continue;
           const state = row.vendor === "project" ? "directory" : row.live === false ? "ended" : "live";
           rows.push(`${address}  ${state}  as of ${member.routing.at}`);
         }

@@ -187,6 +187,12 @@ test("a message from another person waits in the mailbox, and the read acknowled
   const list = said(await call(chatgpt, "list_agents"));
   assert.match(list, /cursor:reviewer@alice +live/);
   assert.doesNotMatch(list, /claude:private/);
+
+  // A machine with two connections answers two times, and each row stays one row.
+  const row = { alias: "cursor:reviewer", vendor: "cursor", name: "reviewer", session: "ses_alice", epoch: 1, live: true };
+  assert.equal(gateway.uniqueRows([row, { ...row }, { ...row, session: "ses_other" }]).length, 2);
+  directory.setRouting(PROJECT, alice.ownerId, [row, { ...row }]);
+  assert.equal(said(await call(chatgpt, "list_agents")).match(/cursor:reviewer@alice/g).length, 1);
 });
 
 test("the server reads one JSON object on each line, and a broken line gets a parse error", async () => {
