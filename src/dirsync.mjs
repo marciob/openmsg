@@ -24,7 +24,7 @@ import * as identity from "./identity.mjs";
 import * as device from "./device.mjs";
 import * as directory from "./directory.mjs";
 import * as permissions from "./permissions.mjs";
-import { settings } from "./settings.mjs";
+import { settings, advertised } from "./settings.mjs";
 
 export const KINDS = ["self", "roster", "revoke-device"];
 export const MAX_RECORD_BYTES = 16 * 1024;
@@ -52,7 +52,7 @@ export function selfRecord(project) {
     owner: me.ownerId,
     label: me.label,
     keys: me.keys,
-    endpoint: settings().endpoint ?? null,
+    endpoint: advertised(),
     at: new Date().toISOString(),
   });
 }

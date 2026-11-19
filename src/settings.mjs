@@ -25,6 +25,25 @@ export function saveSettings(next) {
   return data;
 }
 
+// The address that this owner gives to other people, in an invitation, in the
+// directory, and in the routing data. A loopback address means this machine
+// alone. A gateway that listens there and uses a relay gives no address,
+// because the relay is its way in. With that address in the directory, a
+// sender on another machine writes to its own machine, and never to the relay.
+const LOOPBACK = ["127.0.0.1", "localhost", "::1", "[::1]"];
+
+export function advertised() {
+  const { endpoint, relay } = settings();
+  if (!endpoint) return null;
+  let host;
+  try {
+    host = new URL(endpoint).hostname;
+  } catch {
+    return null;
+  }
+  return relay && LOOPBACK.includes(host) ? null : endpoint;
+}
+
 export function endpointFor(host, port) {
   const name = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
   return `http://${name}:${port}`;

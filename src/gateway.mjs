@@ -31,7 +31,7 @@ import * as relaylink from "./relaylink.mjs";
 import * as limits from "./limits.mjs";
 import * as device from "./device.mjs";
 import * as dirsync from "./dirsync.mjs";
-import { settings, saveSettings, endpointFor } from "./settings.mjs";
+import { settings, saveSettings, endpointFor, advertised } from "./settings.mjs";
 
 export const PATHS = {
   message: "/openmsg/v2/message",
@@ -45,7 +45,7 @@ export const REQUEST_WINDOW_MS = 120_000;
 
 // --- the address of this gateway -----------------------------------------
 
-export { settings, saveSettings, endpointFor };
+export { settings, saveSettings, endpointFor, advertised };
 
 // --- signatures on a request and on an answer ------------------------------
 
@@ -130,7 +130,7 @@ async function handleRouting(request) {
       label: me.label,
       project: projectId,
       at: new Date().toISOString(),
-      endpoint: settings().endpoint ?? null,
+      endpoint: advertised(),
       presence,
       routing,
     }),

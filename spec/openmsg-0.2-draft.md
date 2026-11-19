@@ -105,7 +105,9 @@ Rules:
 5. Two gateways can also use a direct address, and the directory holds that
    address for each member. This transport works on one machine and on one
    private network. A member with a direct address takes a message that way,
-   and a member without one takes it through the relay.
+   and a member without one takes it through the relay. A loopback address
+   names one machine alone. A gateway that listens on a loopback address and
+   uses a relay therefore gives no direct address to the other members.
 6. The relay speaks WebSocket. The first frame of a gateway is a `hello` that
    carries the two public keys of the owner and a signature. The owner id
    comes from the keys, so a key that gives that owner id is the key of that

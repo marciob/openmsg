@@ -868,7 +868,7 @@ function cmdInvite(args) {
       label: flag(rest, "project"),
       projectId: flag(rest, "project-id"),
       hours: Number(flag(rest, "hours") ?? invite.DEFAULT_HOURS),
-      endpoint: flag(rest, "endpoint") ?? gateway.settings().endpoint ?? null,
+      endpoint: flag(rest, "endpoint") ?? gateway.advertised(),
     });
     console.log(`project      ${out.project.id} (${out.project.label})`);
     console.log(`fingerprint  ${out.fingerprint}`);
@@ -893,7 +893,7 @@ function cmdInvite(args) {
   if (sub === "accept") {
     const [token] = positional(rest, ["fingerprint", "endpoint"]);
     const out = invite.accept(token, flag(rest, "fingerprint"), {
-      endpoint: flag(rest, "endpoint") ?? gateway.settings().endpoint ?? null,
+      endpoint: flag(rest, "endpoint") ?? gateway.advertised(),
     });
     console.log(`${out.peer.ownerId} (${out.peer.label}) is now a member of ${out.project.id}`);
     if (out.reply) {
