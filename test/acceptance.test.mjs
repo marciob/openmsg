@@ -224,12 +224,20 @@ test("3. a message that arrives while the receiving agent is busy", async () => 
     return { delivered: true, transport: "stub" };
   };
   readByBob = [];
-  const [one, two] = await Promise.all([
-    bobReceives(letterToBob("while busy, one"), { deliver: slow }),
-    bobReceives(letterToBob("while busy, two"), { deliver: slow }),
-  ]);
+  // The two arrivals share one change of the home. With one change for each,
+  // the first to finish puts the home of the test back, and the second writes
+  // its row into the real home of the person who runs the tests.
+  const [one, two] = await asAsync(BOB, () =>
+    Promise.all([
+      gateway.receive(letterToBob("while busy, one"), { deliver: slow }),
+      gateway.receive(letterToBob("while busy, two"), { deliver: slow }),
+    ]),
+  );
   assert.equal(one.status, "adapter-accepted");
   assert.equal(two.status, "adapter-accepted");
+  for (const out of [one, two]) {
+    assert.equal(as(BOB, () => inbound.find(out.messageId))?.status, "adapter-accepted", "the row is in the store of Bob");
+  }
   assert.equal(readByBob.length, 2);
   assert.equal(readByBob.filter((t) => t.includes("while busy, one")).length, 1);
 });
