@@ -12,6 +12,8 @@
 // - https://modelcontextprotocol.io/specification/2026-07-28/server/discover
 // - https://modelcontextprotocol.io/specification/2026-07-28/server/tools
 import fs from "node:fs";
+import http from "node:http";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as mcpagents from "./mcpagents.mjs";
@@ -277,4 +279,81 @@ export function serve({ name, input = process.stdin, output = process.stdout } =
     }
   });
   return new Promise((resolve) => input.on("end", () => chain.then(resolve)));
+}
+
+// The same server over HTTP, for a product that calls a URL from its own
+// network. One POST carries one JSON-RPC message, and the answer is one JSON
+// object. The server keeps no session, so it gives no session id and no
+// stream.
+//
+// The address is public, because a tunnel or a proxy in front gives it to the
+// internet. A fixed token is therefore the door: a request with no token, or
+// with another one, gets 401 before the server reads its body. The listener
+// stays on the loopback address, and the proxy in front ends TLS.
+export const MAX_HTTP_BODY = 1024 * 1024;
+const MIN_TOKEN = 32;
+
+export function newToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "/mcp", log = () => {} } = {}) {
+  if (typeof token !== "string" || token.length < MIN_TOKEN) throw new Error(`the token needs ${MIN_TOKEN} characters or more`);
+  const server = createServer({ name });
+  // Two digests of one length compare in constant time, whatever the length
+  // of the header that arrived.
+  const digest = (value) => crypto.createHash("sha256").update(value).digest();
+  const expected = digest(`Bearer ${token}`);
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const listener = http.createServer(async (req, res) => {
+    const send = (code, body = null, headers = {}) => {
+      const text = body === null ? "" : JSON.stringify(body);
+      res.writeHead(code, { ...(body === null ? {} : { "content-type": "application/json" }), "content-length": Buffer.byteLength(text), "cache-control": "no-store", ...headers });
+      res.end(text);
+    };
+    try {
+      if (new URL(req.url, "http://local").pathname !== route) return send(404);
+      if (!crypto.timingSafeEqual(digest(String(req.headers.authorization ?? "")), expected)) {
+        // A guess costs time, and it learns nothing.
+        await pause(300);
+        log(`refused a request with no valid token`);
+        req.resume();
+        return send(401, { error: "a valid token is required" }, { "www-authenticate": "Bearer" });
+      }
+      if (req.method !== "POST") return send(405, null, { allow: "POST" });
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > MAX_HTTP_BODY) return send(413, { error: "the body is too big" });
+        chunks.push(chunk);
+      }
+      let message;
+      try {
+        message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        return send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+      }
+      if (Array.isArray(message)) return send(400, { jsonrpc: "2.0", id: null, error: { code: -32600, message: "One message for each request" } });
+      // The revision 2026-07-28 names the method in a header too, and the two must agree.
+      const named = req.headers["mcp-method"];
+      if (named !== undefined && named !== message?.method) {
+        return send(400, { jsonrpc: "2.0", id: message?.id ?? null, error: { code: -32020, message: "The Mcp-Method header and the body do not agree" } });
+      }
+      const answer = await server.handle(message);
+      if (answer === null) return send(202);
+      send(200, answer);
+    } catch (e) {
+      log(`a request failed: ${e.message}`);
+      if (!res.headersSent) send(500, { error: "the server failed" });
+    }
+  });
+  return new Promise((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(port, host, () => {
+      const real = listener.address().port;
+      resolve({ port: real, url: `http://${host}:${real}${route}`, close: () => new Promise((done) => listener.close(done)) });
+    });
+  });
 }

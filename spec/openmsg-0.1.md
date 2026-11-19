@@ -329,6 +329,16 @@ Rules:
 8. The server needs no network address. A product on another network reaches
    it through a tunnel that its vendor gives, and the program of that tunnel
    starts the server on the machine of the owner.
+9. A product whose vendor gives no tunnel calls a URL from its own network.
+   `openmsg mcp serve --as <name> --http` is the same server over HTTP: one
+   POST carries one message, and the answer is one JSON object, with no
+   session and no stream. The server listens on the loopback address alone,
+   and a proxy in front gives it to the network, with TLS. Each request must
+   carry a fixed token, as `Authorization: Bearer <token>`. A request with no
+   valid token gets 401 before the server reads its body, whatever its method
+   or its path under the route. The token has 32 characters or more, it is in
+   a file that only the owner reads, and no command prints it. The server
+   compares it in constant time, and a wrong token costs the caller a pause.
 
 ## 8. Replies
 

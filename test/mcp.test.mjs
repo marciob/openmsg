@@ -205,3 +205,47 @@ test("the server reads one JSON object on each line, and a broken line gets a pa
   assert.equal(lines.find((l) => l.id === null).error.code, -32700);
   assert.equal(lines.find((l) => l.id === 2).result.tools.length, 3);
 });
+
+// --- the server over HTTP -----------------------------------------------------
+
+const TOKEN = mcp.newToken();
+const web = await mcp.serveHttp({ name: "chatgpt", token: TOKEN, port: 0 });
+const { after } = await import("node:test");
+after(() => web.close());
+const post = (body, headers = {}) =>
+  fetch(web.url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+
+test("over HTTP, a request with no token, or with another token, gets 401 and nothing else", async () => {
+  for (const authorization of [undefined, "Bearer wrong", `Bearer ${TOKEN}x`, TOKEN, `bearer ${TOKEN}`]) {
+    const res = await fetch(web.url, { method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+    assert.equal(res.status, 401, String(authorization));
+    assert.doesNotMatch(await res.text(), /send_message|list_agents/);
+  }
+  // A method that is not POST gets 401 too, so a stranger learns no path.
+  assert.equal((await fetch(web.url)).status, 401);
+  assert.throws(() => mcp.serveHttp({ name: "chatgpt", token: "short" }), /32 characters/);
+});
+
+test("over HTTP, the token opens the same tools, in the two forms of the protocol", async () => {
+  const hello = await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } });
+  assert.equal(hello.status, 200);
+  assert.match(hello.headers.get("content-type"), /application\/json/);
+  assert.equal((await hello.json()).result.protocolVersion, "2025-11-25");
+  assert.equal((await post({ jsonrpc: "2.0", method: "notifications/initialized" })).status, 202);
+
+  const list = await (await post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: { _meta: META } }, { "mcp-method": "tools/list" })).json();
+  assert.equal(list.result.resultType, "complete");
+  assert.equal(list.result.tools.length, 3);
+
+  const box = await (await post({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "read_inbox", arguments: {} } })).json();
+  assert.match(box.result.content[0].text, /No new message|message/);
+});
+
+test("over HTTP, a bad request gets the status for its fault", async () => {
+  assert.equal((await fetch(web.url, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
+  assert.equal((await fetch(web.url.replace("/mcp", "/other"), { method: "POST", headers: { authorization: `Bearer ${TOKEN}` } })).status, 404);
+  assert.equal((await post("not json")).status, 400);
+  assert.equal((await post([{ jsonrpc: "2.0", id: 1, method: "ping" }])).status, 400);
+  assert.equal((await post({ jsonrpc: "2.0", id: 1, method: "ping" }, { "mcp-method": "tools/list" })).status, 400);
+  assert.equal((await post("x".repeat(mcp.MAX_HTTP_BODY + 10))).status, 413);
+});

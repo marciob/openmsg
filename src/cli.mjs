@@ -55,6 +55,8 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp remove <name>         take that agent away
   openmsg mcp list                  the agents that read through MCP
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
+     [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
+     [--token-file <file>]          the file of that token. openmsg makes it when it is not there
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
   openmsg install --hooks           add the hooks for claude, cursor, and gemini
@@ -374,16 +376,33 @@ async function cmdMcp(args) {
     if (args[i] === "--allow") {
       if (args[i + 1] === undefined) throw new Error('--allow needs an address, such as "claude:*"');
       allow.push(args[++i]);
-    } else if (args[i] === "--per-minute" || args[i] === "--as") {
+    } else if (["--per-minute", "--as", "--port", "--token-file", "--path"].includes(args[i])) {
       i += 1;
-    } else words.push(args[i]);
+    } else if (args[i] !== "--http") words.push(args[i]);
   }
   const [sub, name] = words;
   if (sub === "serve") {
     const as = flag(args, "as");
-    if (!as) throw new Error("usage: openmsg mcp serve --as <name>");
+    if (!as) throw new Error("usage: openmsg mcp serve --as <name> [--http --port <n> --token-file <file>]");
     if (!mcpagents.get(as)) throw new Error(`no agent mcp:${as}. Run: openmsg mcp add ${as}`);
-    await mcp.serve({ name: as });
+    if (!args.includes("--http")) {
+      await mcp.serve({ name: as });
+      return;
+    }
+    // The token is in a file that only the owner reads. No command prints it.
+    const file = flag(args, "token-file") ?? path.join(identity.home(), `mcp-${as}.token`);
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, mcp.newToken(), { mode: 0o600 });
+    }
+    const token = fs.readFileSync(file, "utf8").trim();
+    const stamp = (line) => console.log(`${new Date().toISOString()} ${line}`);
+    const running = await mcp.serveHttp({ name: as, token, port: Number(flag(args, "port") ?? 7812), route: flag(args, "path") ?? "/mcp", log: stamp });
+    stamp(`mcp:${as} listens on ${running.url}, and each request needs the token in ${file}`);
+    stamp('The header of a request: "Authorization: Bearer <token>". A proxy in front gives the address to the network, with TLS.');
+    const stop = () => running.close().then(() => process.exit(0));
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
     return;
   }
   if (sub === "add") {
