@@ -139,6 +139,22 @@ test("the same message again reaches the agent one time", async () => {
   assert.equal(delivered.length, read);
 });
 
+test("the same message at the same moment, over two connections, reaches the agent one time", async () => {
+  const wire = letter("two arrivals in one moment");
+  const slow = async (agent, message, { text }) => {
+    await sleep(120);
+    delivered.push(text);
+    return { delivered: true, transport: "stub" };
+  };
+  const before = delivered.length;
+  const [one, two] = await asAsync(BOB, () =>
+    Promise.all([gateway.receive(wire, { deliver: slow }), gateway.receive(wire, { deliver: slow })]),
+  );
+  assert.equal(one.status, "adapter-accepted");
+  assert.equal(two.status, "adapter-accepted");
+  assert.equal(delivered.length, before + 1, "the adapter ran one time");
+});
+
 test("the three limits each stop a message in their own way", () => {
   const now = Date.now();
   const at = (ms) => new Date(now - ms).toISOString();

@@ -258,7 +258,25 @@ async function handleRouting(request) {
 
 // The whole path of an inbound message: open it, apply the permission, and
 // give it to the adapter. Every step writes the state to the durable store.
-export async function receive(wire, { deliver = deliverLocal, now = Date.now(), log = () => {}, via = "http" } = {}) {
+// One message id at a time. The same message can arrive two times in the
+// same moment, over two connections or two routes. The second arrival waits
+// for the first, and then the store says that it is a duplicate. Without this
+// order, both pass the check of the store, and the agent wakes two times.
+const arriving = new Map();
+export function receive(wire, options = {}) {
+  const id = wire?.messageId;
+  if (typeof id !== "string") return receiveOne(wire, options);
+  const before = arriving.get(id) ?? Promise.resolve();
+  const run = before.catch(() => {}).then(() => receiveOne(wire, options));
+  arriving.set(id, run);
+  const clear = () => {
+    if (arriving.get(id) === run) arriving.delete(id);
+  };
+  run.then(clear, clear);
+  return run;
+}
+
+async function receiveOne(wire, { deliver = deliverLocal, now = Date.now(), log = () => {}, via = "http" } = {}) {
   let opened;
   try {
     opened = remote.open(wire, { now });

@@ -75,3 +75,46 @@ test("a relay that goes silent, with no FIN, is dropped, and the gateway connect
   assert.ok(await until(() => closed === 1), "the gateway saw that the relay is gone");
   assert.ok(await until(() => opened === 2), "the gateway connected again");
 });
+
+test("a try that fails and a socket that closes later give one connection, and not two", async () => {
+  // The opener stands for a relay that takes the connection and gives no
+  // welcome. The try throws, and the socket of that try closes a moment later.
+  let tries = 0;
+  let open = 0;
+  const closers = [];
+  const opener = async (url, handlers) => {
+    tries += 1;
+    if (tries === 1) {
+      setTimeout(() => handlers.onClose?.(), 30);
+      throw new Error("the relay sent no welcome");
+    }
+    open += 1;
+    const listeners = [];
+    const link = {
+      closed: false,
+      connection: { on: (name, fn) => listeners.push(fn), send: () => true, drop: () => {} },
+      close: () => {
+        link.closed = true;
+        open -= 1;
+      },
+    };
+    closers.push(() => handlers.onClose?.());
+    return link;
+  };
+  const errors = [];
+  const second = await relaylink.keep("ws://127.0.0.1:1", { onError: (e) => errors.push(e.error) }, { heartbeatMs: 10_000, opener });
+  try {
+    assert.equal(errors.length, 1);
+    await new Promise((r) => setTimeout(r, 2600));
+    assert.equal(tries, 2, "one try after the failure, and not one for each event");
+    assert.equal(open, 1);
+
+    // The connection closes two times in a row, as a socket can. One new try follows.
+    closers[0]();
+    closers[0]();
+    await new Promise((r) => setTimeout(r, 1300));
+    assert.equal(tries, 3);
+  } finally {
+    second.stop();
+  }
+});

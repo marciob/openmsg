@@ -134,7 +134,15 @@ export async function open(url, handlers = {}) {
     connection.on("message", first);
   });
   connection.send(JSON.stringify(hello()));
-  link.welcome = await welcome;
+  try {
+    link.welcome = await welcome;
+  } catch (e) {
+    // A relay that gives no welcome leaves a connection that carries
+    // nothing. It must not stay open after this try fails.
+    link.closed = true;
+    connection.drop();
+    throw e;
+  }
   return link;
 
   function expect(key, timeoutMs) {
@@ -223,11 +231,17 @@ export async function open(url, handlers = {}) {
 // gateway drops the connection and connects again.
 export const HEARTBEAT_MS = 20_000;
 
-export async function keep(url, handlers = {}, { heartbeatMs = HEARTBEAT_MS } = {}) {
+export async function keep(url, handlers = {}, { heartbeatMs = HEARTBEAT_MS, opener = open } = {}) {
   let link = null;
   let stopped = false;
   let wait = 1000;
   let beat = null;
+  // One try at a time, and one timer for the next try. A connection that
+  // fails gives two events: the try throws, and the socket closes later.
+  // With one timer for each event, the gateway held two connections, took
+  // each message two times, and woke its agent two times.
+  let timer = null;
+  let connecting = false;
   const holder = {
     get link() {
       return link;
@@ -235,8 +249,16 @@ export async function keep(url, handlers = {}, { heartbeatMs = HEARTBEAT_MS } = 
     stop() {
       stopped = true;
       clearInterval(beat);
+      clearTimeout(timer);
       link?.close();
     },
+  };
+  const schedule = () => {
+    if (stopped || timer || connecting || link) return;
+    timer = setTimeout(() => {
+      timer = null;
+      again();
+    }, wait);
   };
   const watch = (current) => {
     let seen = Date.now();
@@ -250,21 +272,34 @@ export async function keep(url, handlers = {}, { heartbeatMs = HEARTBEAT_MS } = 
     }, heartbeatMs);
   };
   const again = async () => {
-    if (stopped) return;
+    if (stopped || connecting || link) return;
+    connecting = true;
+    let mine = null;
     try {
-      link = await open(url, { ...handlers, onClose: () => {
+      mine = await opener(url, { ...handlers, onClose: () => {
+        // A close before the try gave its link back belongs to a try that
+        // failed, and the catch below answers it. A close of an old
+        // connection changes nothing for the connection of now.
+        if (mine === null || link !== mine) return;
         clearInterval(beat);
-        handlers.onClose?.();
         link = null;
-        if (!stopped) setTimeout(again, wait);
+        handlers.onClose?.();
+        schedule();
       } });
+      connecting = false;
+      if (stopped) {
+        mine.close();
+        return;
+      }
+      link = mine;
       wait = 1000;
       watch(link);
       handlers.onOpen?.(link);
     } catch (e) {
+      connecting = false;
       handlers.onError?.({ error: e.message });
       wait = Math.min(wait * 2, 60_000);
-      if (!stopped) setTimeout(again, wait);
+      schedule();
     }
   };
   await again();
