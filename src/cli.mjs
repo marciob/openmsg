@@ -65,7 +65,9 @@ For the agents of another person, on another machine:
   openmsg dir revoke <project-id> <owner-id> [--reason <text>]
   openmsg gateway start [--port <n>] [--host <h>]
   openmsg publish <agent>           let the project reach this session
+  openmsg publish --all             let the project reach every session, and each new one
   openmsg unpublish <alias>         take a session back
+  openmsg unpublish --all           go back to the sessions that you named
   openmsg permit <owner> <accept|hold|refuse>
   openmsg held [<id>] [--text]      the messages that wait for you
   openmsg held --all                every message from another person, and its state
@@ -693,7 +695,8 @@ async function cmdGateway(args) {
   }
   console.log(`gateway of ${me.label} (${me.ownerId}) listens on ${running.url}`);
   const rows = published.list();
-  if (rows.length === 0) console.log("nothing is published. Run: openmsg publish <agent>");
+  for (const id of published.openProjects()) stamp(`every session of this machine is published in ${id}`);
+  if (rows.length === 0 && published.openProjects().length === 0) console.log("nothing is published. Run: openmsg publish <agent>");
   for (const r of rows) console.log(`published ${r.alias} · project ${r.project} · epoch ${r.epoch}`);
   const stop = () => {
     console.log("gateway stopped");
@@ -705,9 +708,18 @@ async function cmdGateway(args) {
 
 async function cmdPublish(args) {
   const [query] = positional(args, ["project"]);
+  if (args.includes("--all")) {
+    const project = projectId(args);
+    published.setOpen(project, true);
+    console.log(`every session of this machine can be reached in ${project}, and each new session too`);
+    console.log("A member of that project can write to each of them. Your permission for each sender still holds.");
+    console.log("Stop it: openmsg unpublish --all. A gateway that runs takes the change at once.");
+    return;
+  }
   if (!query) {
     const rows = published.list();
-    if (rows.length === 0) console.log("nothing is published");
+    for (const id of published.openProjects()) console.log(`${"every session".padEnd(28)} ${id}  each session that runs, and each new one`);
+    if (rows.length === 0 && published.openProjects().length === 0) console.log("nothing is published");
     for (const r of rows) console.log(`${r.alias.padEnd(28)} ${r.project}  epoch ${r.epoch}  session ${r.session}`);
     return;
   }
@@ -719,6 +731,11 @@ async function cmdPublish(args) {
 
 function cmdUnpublish(args) {
   const project = projectId(args);
+  if (args.includes("--all")) {
+    const was = published.setOpen(project, false);
+    console.log(was ? `only the sessions that you named are published in ${project} now` : `${project} did not take every session`);
+    return;
+  }
   const [alias] = positional(args, ["project"]);
   const gone = published.unpublish(project, alias);
   console.log(gone ? `${alias} is not published any more` : `${alias} was not published in ${project}`);

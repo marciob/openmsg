@@ -62,6 +62,28 @@ export function unpublish(projectId, alias) {
   return gone;
 }
 
+// An owner can select every session of the machine for one project. Each
+// session that runs then, and each new session, is published there. The owner
+// types that choice, and nothing else turns it on.
+export function setOpen(projectId, on) {
+  const data = read();
+  const open = data.open ?? {};
+  const was = Boolean(open[projectId]);
+  if (on) open[projectId] = { at: open[projectId]?.at ?? new Date().toISOString() };
+  else delete open[projectId];
+  data.open = open;
+  save(data);
+  return was;
+}
+
+export function isOpen(projectId) {
+  return Boolean(read().open?.[projectId]);
+}
+
+export function openProjects() {
+  return Object.keys(read().open ?? {});
+}
+
 export function list(projectId = null) {
   const data = read();
   const out = [];

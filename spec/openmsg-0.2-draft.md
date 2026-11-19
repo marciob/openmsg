@@ -342,7 +342,12 @@ Rules:
 1. The gateway of the receiver gives the message to the local adapter of 0.1.
 2. The adapters do not change. The last step is the same as for one person.
 3. Only the sessions that the owner selects are published. The default is that
-   nothing is published.
+   nothing is published. An owner can select every session of the machine for
+   one project, with `openmsg publish --all`. Each session that runs then, and
+   each new session, is published in that project, with the epoch 1. The
+   owner types that choice, and no message turns it on. A background session,
+   such as a program that uses an SDK, stays out. The permission for each
+   sender still decides whether a message reaches the agent.
 4. A published session has two descriptions, and they are not the same thing:
    - **Presence**, which a person reads: the alias and the status.
    - **Routing data**, which a gateway reads: the owner id, the project id, the

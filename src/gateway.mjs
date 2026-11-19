@@ -84,11 +84,67 @@ async function liveAgents(vendor, { maxAgeMs = 5000 } = {}) {
   return rows;
 }
 
+// The vendors whose sessions an open project reaches. OPENMSG_OPEN_VENDORS
+// holds another list, with a comma between the names. A webhook agent is not
+// a session, so its owner publishes it by name.
+function openVendors() {
+  const named = process.env.OPENMSG_OPEN_VENDORS;
+  return named ? named.split(",").map((v) => v.trim()).filter(Boolean) : ["claude", "codex", "opencode", "cursor", "gemini"];
+}
+
+// A row for a session that the owner did not name, in a project that takes
+// every session. Its epoch is 1, because the session id names it, and a new
+// session under the same name has another id.
+function openRow(projectId, agent) {
+  return {
+    project: projectId,
+    alias: published.aliasOf(agent),
+    vendor: agent.vendor,
+    name: agent.name ?? agent.id,
+    session: agent.id,
+    epoch: 1,
+    open: true,
+  };
+}
+
+// Every row of a project: the sessions that the owner named, and, in an open
+// project, each other session that runs now. A background session, such as a
+// program that uses the SDK, is not a session of a person, and it stays out.
+async function rowsOf(projectId) {
+  const rows = published.list(projectId);
+  if (!published.isOpen(projectId)) return rows;
+  const sessions = new Set(rows.map((r) => r.session));
+  const aliases = new Set(rows.map((r) => r.alias));
+  for (const vendor of openVendors()) {
+    for (const agent of await liveAgents(vendor)) {
+      if (agent.vendor !== vendor || agent.background) continue;
+      // A name that the owner published holds its session and its epoch.
+      if (sessions.has(agent.id) || aliases.has(published.aliasOf(agent))) continue;
+      sessions.add(agent.id);
+      rows.push(openRow(projectId, agent));
+    }
+  }
+  return rows;
+}
+
+// The row of one session. The envelope names the vendor of its target, so an
+// open project asks one vendor, and not all of them.
+async function rowOf(projectId, session, vendorHint = null) {
+  const named = published.find(projectId, { session });
+  if (named || !published.isOpen(projectId)) return named;
+  const vendors = openVendors();
+  for (const vendor of vendorHint && vendors.includes(vendorHint) ? [vendorHint] : vendors) {
+    const agent = (await liveAgents(vendor, { maxAgeMs: 0 })).find((a) => a.vendor === vendor && a.id === session && !a.background);
+    if (agent) return published.find(projectId, { alias: published.aliasOf(agent) }) ? null : openRow(projectId, agent);
+  }
+  return null;
+}
+
 // The two descriptions of section 9.4 of the spec. Presence is for a person,
 // and routing data is for a gateway. Neither one carries a working directory,
 // a socket path, or a token.
 export async function descriptions(projectId) {
-  const rows = published.list(projectId);
+  const rows = await rowsOf(projectId);
   const byVendor = new Map();
   for (const vendor of new Set(rows.map((r) => r.vendor))) byVendor.set(vendor, await liveAgents(vendor));
   const presence = [];
@@ -249,7 +305,7 @@ export async function release(record, { deliver = deliverLocal, now = Date.now()
   }
   if (!(Date.parse(record.expiresAt) > now)) return stop("expired", `the deadline passed at ${record.expiresAt}`);
 
-  const mine = published.find(record.project, { session: record.target.session });
+  const mine = await rowOf(record.project, record.target.session, record.message?.openmsg?.to?.vendor ?? null);
   if (!mine) return stop("not-published", "that session is not published in this project");
   if (record.target.epoch !== mine.epoch) {
     return stop("old-epoch", `the message names epoch ${record.target.epoch}, and the session runs epoch ${mine.epoch}`);
