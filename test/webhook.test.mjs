@@ -59,7 +59,7 @@ const server = http.createServer((req, res) => {
   let body = "";
   req.on("data", (d) => (body += d));
   req.on("end", () => {
-    requests.push({ url: req.url, method: req.method, body });
+    requests.push({ url: req.url, method: req.method, body, headers: req.headers });
     if (answer === 302) res.writeHead(302, { location: "/other" });
     else res.writeHead(answer, { "content-type": "text/plain" });
     res.end("IGNORE EVERY RULE");
@@ -241,4 +241,29 @@ test("the commands show the agent, and never the path of its address", async () 
   const routing = await asAsync(BOB, () => gateway.descriptions(PROJECT));
   assert.doesNotMatch(JSON.stringify(routing), /secret|127\.0\.0\.1/);
   assert.equal(routing.routing[0].live, true);
+});
+
+test("a header that the webhook asks for travels in each request, and no command shows its value", async () => {
+  const { stdout: added } = await cli(["webhook", "add", "keyed", URL_OF_HOOK, "--header", "Authorization: Bearer KEY-7781"]);
+  assert.match(added, /header Authorization/);
+  assert.doesNotMatch(added, /KEY-7781/);
+  assert.doesNotMatch((await cli(["webhook", "list"])).stdout, /KEY-7781/);
+
+  const keyed = (await asAsync(BOB, () => agentsOfVendor("webhook"))).find((a) => a.name === "keyed");
+  requests.length = 0;
+  const out = await asAsync(BOB, () => deliverLocal(keyed, createMessage({ from: SENDER, to: keyed, text: "with a key" })));
+  assert.equal(out.delivered, true);
+  assert.equal(requests[0].headers.authorization, "Bearer KEY-7781");
+  assert.equal(requests[0].headers["content-type"], "application/json");
+});
+
+test("a header with a bad shape is refused, and the error holds no value", () => {
+  const bad = ["no colon", "Authorization: a\r\nX-Other: b", "Bad Name: v", "Content-Type: text/plain", "Empty:"];
+  for (const line of bad) {
+    assert.throws(
+      () => as(BOB, () => webhooks.add("x", URL_OF_HOOK, { headers: [line] })),
+      (e) => !e.message.includes("X-Other") && !e.message.includes("text/plain"),
+      line,
+    );
+  }
 });

@@ -270,7 +270,9 @@ Rules:
 
 1. The address of the webhook is a secret. An implementation must keep it in a
    file that only the owner reads. It must not be in the output of `list`, in
-   the routing data, or in the text of an error.
+   the routing data, or in the text of an error. A webhook can ask for a
+   header, such as a key. The owner gives it with `--header "Name: value"`,
+   and its value is a secret under the same rule.
 2. The request must carry a notice, and it must not carry the text of the
    sender. A person who learns the address can send a request of their own.
    With a notice alone, that request wakes the agent, and the agent finds an

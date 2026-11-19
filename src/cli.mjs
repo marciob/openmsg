@@ -43,6 +43,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg inbox [--json] [--all]    show the messages for this agent
   openmsg whoami                    show how this agent is addressed
   openmsg webhook add <name> <url>  name an agent that wakes on an HTTP request
+     [--header "Name: value"]       a header that the webhook asks for, such as a key
   openmsg webhook remove <name>     take that agent away
   openmsg webhook list              the agents that wake on an HTTP request
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
@@ -340,11 +341,22 @@ async function acknowledgeRead(rows) {
 }
 
 function cmdWebhook(args) {
-  const [sub, name, url] = args;
+  // --header can come more than one time, and each one takes the next word.
+  const headers = [];
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--header") {
+      if (args[i + 1] === undefined) throw new Error('--header needs a value, such as "Authorization: Bearer <key>"');
+      headers.push(args[++i]);
+    } else words.push(args[i]);
+  }
+  const [sub, name, url] = words;
   if (sub === "add") {
-    if (!name || !url) throw new Error("usage: openmsg webhook add <name> <url>");
-    const row = webhooks.add(name, url);
+    if (!name || !url) throw new Error('usage: openmsg webhook add <name> <url> [--header "Name: value"]');
+    const row = webhooks.add(name, url, { headers });
     console.log(`webhook:${row.name} wakes on a request to the address that you gave`);
+    const names = Object.keys(row.headers);
+    if (names.length > 0) console.log(`Each request carries the header ${names.join(", ")}. Its value is a secret too.`);
     console.log("That address is a secret. A person who holds it can wake the agent, and cannot write to it.");
     console.log(`The agent names itself with: export OPENMSG_SELF=webhook:${row.name}`);
     return;

@@ -31,7 +31,8 @@ export async function deliver(agent, message, { timeoutMs = 10_000 } = {}) {
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      // The owner can name a header that the webhook asks for, such as a key.
+      headers: { ...(agent.transport.headers ?? {}), "content-type": "application/json" },
       body: JSON.stringify(notice(agent, message)),
       signal: AbortSignal.timeout(timeoutMs),
       // A redirect can send the notice to an address that the owner did not give.

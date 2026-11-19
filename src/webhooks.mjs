@@ -32,7 +32,24 @@ function save(data) {
 // A name is a part of an address, and of a file name of the mailbox.
 const NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
-export function add(name, url) {
+// A webhook can ask for a header, for example "Authorization: Bearer <key>".
+// The value is a secret, as the URL is. A line break in a header starts a
+// second header, so a value with one is refused. The error never holds the
+// value.
+const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+export function parseHeader(line) {
+  const at = String(line ?? "").indexOf(":");
+  const name = at === -1 ? "" : line.slice(0, at).trim();
+  const value = at === -1 ? "" : line.slice(at + 1).trim();
+  if (!HEADER_NAME.test(name) || value === "" || /[\r\n\0]/.test(value)) {
+    throw new Error('a header has the shape "Name: value", on one line');
+  }
+  if (name.toLowerCase() === "content-type") throw new Error("the notice is JSON, and its content-type does not change");
+  return [name, value];
+}
+
+export function add(name, url, { headers = [] } = {}) {
   if (!NAME.test(String(name ?? ""))) {
     throw new Error(`"${name}" is not a name. Use lowercase letters, digits, ".", "_", and "-"`);
   }
@@ -45,8 +62,9 @@ export function add(name, url) {
   if (address.protocol !== "https:" && address.protocol !== "http:") {
     throw new Error(`a webhook takes an http:// or https:// address, and "${url}" is neither`);
   }
+  const extra = Object.fromEntries(headers.map(parseHeader));
   const data = read();
-  data[name] = { url: address.href, addedAt: data[name]?.addedAt ?? new Date().toISOString() };
+  data[name] = { url: address.href, headers: extra, addedAt: data[name]?.addedAt ?? new Date().toISOString() };
   save(data);
   return { name, ...data[name] };
 }
@@ -72,6 +90,6 @@ export function agents() {
     title: "wakes on an HTTP request",
     startedAt: null,
     updatedAt: null,
-    transport: { kind: "webhook", url: row.url },
+    transport: { kind: "webhook", url: row.url, headers: row.headers ?? {} },
   }));
 }
