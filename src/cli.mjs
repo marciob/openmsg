@@ -60,9 +60,12 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp trust <name>          a request from that chat counts as a request of yours
   openmsg mcp untrust <name>        stop that
   openmsg ask "<question>"          ask the owner, when the owner is not at this machine
+     [--image <file.png|jpg>]       a screenshot to show, up to 4. The question becomes a review
+     [--option "<text>"]            an option to choose, 2 to 6. The question becomes a review
   openmsg asks [--json]             the questions that wait for the owner
   openmsg asks --history            the answers of the last 30 days
   openmsg answer <id> yes|no        the answer of the owner. The session that asked gets it as a message
+  openmsg answer <id> [--choice <option or number>] [--comment "<text>"]   the answer to a review
   openmsg mcp list                  the agents that read through MCP
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
@@ -627,16 +630,31 @@ function cmdTrust(args, on) {
 }
 
 // An agent asks its owner, and the owner is not at the machine.
+// Each value of a flag that can come more than one time.
+function flags(args, name) {
+  const out = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== `--${name}`) continue;
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith("--")) throw new Error(`--${name} needs a value`);
+    out.push(value);
+    i += 1;
+  }
+  return out;
+}
+
 async function cmdAsk(args) {
-  const question = positional(args).join(" ");
-  if (!question) throw new Error('usage: openmsg ask "<one question, with the exact action>"');
+  const question = positional(args, ["image", "option"]).join(" ");
+  if (!question) throw new Error('usage: openmsg ask "<one question, with the exact action>" [--image <file>] [--option "<text>"]');
   const from = await self();
   if (!from || from.unresolved || ["shell", "mcp", "webhook"].includes(from.vendor)) {
     throw new Error("only a session on this machine asks its owner. openmsg did not find the session of this command");
   }
-  const row = asks.put({ from, question });
-  console.log(`The question ${row.id} waits for your user.`);
-  console.log("The answer arrives in this session as a message from your user. Do not do the action before it arrives.");
+  const row = asks.put({ from, question, images: flags(args, "image"), options: flags(args, "option") });
+  console.log(`The ${row.kind === "review" ? "review" : "question"} ${row.id} waits for your user.`);
+  console.log(row.kind === "review"
+    ? "The answer arrives in this session as a message from your user: an option, a comment, or both. Wait for it before you build on one option."
+    : "The answer arrives in this session as a message from your user. Do not do the action before it arrives.");
   console.log("If a chat of your user asked for this work, tell that chat that a question waits for the owner.");
 }
 
@@ -644,16 +662,27 @@ function cmdAsks(args) {
   if (args.includes("--history")) {
     const done = asks.history();
     if (done.length === 0) console.log("no question has an answer yet");
-    for (const r of done) console.log(`${r.answeredAt}  ${r.answer.padEnd(3)}  ${address(r.from)}  through ${r.via}\n    ${r.question}`);
+    for (const r of done) {
+      const said = r.answer === "feedback" ? [r.choice && `chose: ${r.choice}`, r.comment && `comment: ${r.comment}`].filter(Boolean).join("\n    ") : null;
+      console.log(`${r.answeredAt}  ${r.answer.padEnd(3)}  ${address(r.from)}  through ${r.via}\n    ${r.question}${said ? `\n    ${said}` : ""}`);
+    }
     return;
   }
   const rows = asks.waiting();
   if (args.includes("--json")) {
-    console.log(JSON.stringify(rows.map((r) => ({ id: r.id, from: address(r.from), dir: r.from.cwd, question: r.question, askedAt: r.askedAt })), null, 1));
+    console.log(JSON.stringify(rows.map((r) => ({
+      id: r.id, kind: r.kind ?? "approval", from: address(r.from), dir: r.from.cwd, question: r.question, askedAt: r.askedAt,
+      ...(r.kind === "review" ? { options: r.options, images: r.images.map((name) => path.join(asks.filesDir(), name)) } : {}),
+    })), null, 1));
     return;
   }
   if (rows.length === 0) console.log("no question waits for the owner");
-  for (const r of rows) console.log(`${r.id}  ${address(r.from)}  ${r.askedAt}\n    ${r.question}\n    openmsg answer ${r.id} yes   |   openmsg answer ${r.id} no`);
+  for (const r of rows) {
+    if (r.kind === "review") {
+      const lines = [...r.options.map((o, i) => `${i + 1}. ${o}`), ...r.images.map((name) => `image: ${path.join(asks.filesDir(), name)}`)];
+      console.log(`${r.id}  review  ${address(r.from)}  ${r.askedAt}\n    ${r.question}${lines.map((l) => `\n    ${l}`).join("")}\n    openmsg answer ${r.id} --choice <n> --comment "<text>"`);
+    } else console.log(`${r.id}  ${address(r.from)}  ${r.askedAt}\n    ${r.question}\n    openmsg answer ${r.id} yes   |   openmsg answer ${r.id} no`);
+  }
 }
 
 // The environment of a command that an agent runs. The owner answers, and an
@@ -663,29 +692,39 @@ function cmdAsks(args) {
 const AGENT_ENV = ["CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CODEX_THREAD_ID", "OPENCODE_SESSION_ID", "OPENMSG_SELF"];
 
 async function cmdAnswer(args) {
-  const [id, word] = positional(args, ["via"]);
-  if (!id || !["yes", "no"].includes(word)) throw new Error("usage: openmsg answer <id> yes|no");
+  const [id, word] = positional(args, ["via", "choice", "comment"]);
+  const isReview = args.includes("--choice") || args.includes("--comment");
+  if (!id || (isReview ? word !== undefined : !["yes", "no"].includes(word))) {
+    throw new Error('usage: openmsg answer <id> yes|no, or openmsg answer <id> [--choice <option or number>] [--comment "<text>"]');
+  }
   if (AGENT_ENV.some((name) => process.env[name])) {
     throw new Error("only the owner answers a question. This command runs inside a session of an agent");
   }
-  const row = asks.answer(id, word === "yes", { via: flag(args, "via") ?? "the command line" });
+  const via = { via: flag(args, "via") ?? "the command line" };
+  const row = isReview
+    ? asks.review(id, { choice: flag(args, "choice"), comment: flag(args, "comment") }, via)
+    : asks.answer(id, word === "yes", via);
   const live = (await allAgents()).find((a) => a.vendor === row.from.vendor && a.id === row.from.id);
   const to = live ?? row.from;
+  const parts = layoutOfAnswer(row);
   const message = createMessage({
     from: { vendor: "owner", id: "owner", name: "owner" },
     to,
-    text: `Question: ${row.question}\nAnswer: ${row.answer}`,
+    text: parts.body,
   });
-  const parts = layoutOfAnswer(row);
   if (!live) {
     // The session ended. The answer waits in its mailbox, as a record.
     mailbox.put(to, { ...message, rendered: compose(parts) }, "queued");
-    console.log(`${row.answer} is the answer to ${row.id}. The session ${address(to)} ended, and the answer is in its mailbox.`);
+    console.log(`${said(row)} is the answer to ${row.id}. The session ${address(to)} ended, and the answer is in its mailbox.`);
     return;
   }
   const result = await deliverLocal(live, message, { parts });
   if (!result.stored) mailbox.put(live, { ...message, rendered: compose(parts) }, result.delivered ? "delivered" : "queued");
-  console.log(`${row.answer} is the answer to ${row.id}, and ${address(live)} ${result.delivered ? "has it" : "reads it at the end of its next turn"}.`);
+  console.log(`${said(row)} is the answer to ${row.id}, and ${address(live)} ${result.delivered ? "has it" : "reads it at the end of its next turn"}.`);
+}
+
+function said(row) {
+  return row.answer === "feedback" ? (row.choice ? `"${row.choice}"` : "a comment") : row.answer;
 }
 
 function cmdWebhook(args) {

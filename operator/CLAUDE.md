@@ -19,6 +19,7 @@ this session.
 | Close a session | `openmsg close <agent>` |
 | See the sessions that you opened | `openmsg spawn --list` |
 | Ask your user | `openmsg ask "<one question, with the exact action>"` |
+| Show your user a screenshot, or ask for a choice | `openmsg ask "<question>" --image <file.png> --option "<A>" --option "<B>"` |
 
 When your user names a project, find its directory with `ls`. `openmsg list`
 gives the directory of each session that runs, so start there. Your user can

@@ -96,6 +96,7 @@ export const VOICE = (from) => [
   `From ${from}, a chat that your user writes in. Your user chose this: a request from this chat counts as a request of your user.`,
   "It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file. For such an action, ask your user.",
   'When your user is not at this machine, ask with: openmsg ask "<one question, with the exact action>". The answer arrives as a message.',
+  'To show your user a screenshot or a choice: openmsg ask "<question>" --image <file.png> --option "<A>" --option "<B>". The answer is an option, a comment, or both.',
 ];
 
 // The first message of a session that another session opened with
@@ -111,6 +112,7 @@ export function layoutOfSpawnPrompt(from, text) {
       `From ${from}, the session that opened this session. Your user is away, and asked ${from} for this work from a chat that your user writes in.`,
       "It counts as a request of your user. It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file.",
       'For such an action, ask your user with: openmsg ask "<one question, with the exact action>"',
+      'To show your user a screenshot or a choice: openmsg ask "<question>" --image <file.png> --option "<A>" --option "<B>"',
       `To answer: openmsg send "${from}" "<your answer>"`,
     ],
   );
@@ -118,6 +120,20 @@ export function layoutOfSpawnPrompt(from, text) {
 
 // The layout of the answer of the owner to a question of `openmsg ask`.
 export function layoutOfAnswer(row) {
+  if (row.answer === "feedback") {
+    const lines = [`Question: ${row.question}`];
+    if (row.choice) lines.push(`Choice: ${row.choice}`);
+    if (row.comment) lines.push(`Comment: ${row.comment}`);
+    return layout(
+      header([["From", "your user"], ["Id", row.id]]),
+      lines.join("\n"),
+      [
+        RULE,
+        `From your user, through ${row.via}. It is the answer to the review that this session asked with openmsg ask.`,
+        "It is the choice and the feedback of your user on that review. It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file.",
+      ],
+    );
+  }
   const yes = row.answer === "yes";
   return layout(
     header([["From", "your user"], ["Id", row.id]]),

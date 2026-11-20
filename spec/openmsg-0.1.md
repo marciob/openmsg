@@ -433,6 +433,17 @@ owner. The owner is possibly not at the machine.
 6. The path of the answer must not pass through the chat that asked for the
    work. Text of another person can make that chat send, and the same text
    must not be able to send the answer.
+7. A question can be a review. `--image <file>` adds a PNG or JPEG file, up
+   to four, of 8 MB or less each. For a page, the session sends a screenshot
+   of it. `--option "<text>"` adds an option, two to six. openmsg keeps a
+   copy of each image while the question waits, and it deletes the copy at
+   the answer.
+8. The owner answers a review with `openmsg answer <id> --choice <option>
+   --comment "<text>"`, with one of the two or both. The choice is the text
+   or the number of an option. A review takes no yes or no, and a question
+   with no image and no option takes no choice. The text after the second
+   line of dashes says that the answer is the choice and the feedback of the
+   owner, and that it approves no action that cannot be undone.
 
 ### 9.2 A session that openmsg opens
 

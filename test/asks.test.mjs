@@ -91,3 +91,49 @@ test("the history holds each answer, the newest first, and no question that wait
   assert.equal(done.some((r) => r.question === "Still waits?"), false);
   assert.match(run(["asks", "--history"]), /yes +cursor:worker +through the command line\n +Second\?/);
 });
+
+// A review: a screenshot and options, and the answer is a choice and a comment.
+const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
+
+test("a session asks for a review, and openmsg keeps a copy of each image", () => {
+  const shot = path.join(HOME, "board.png");
+  fs.writeFileSync(shot, PNG);
+  const out = run(["ask", "Which concept?", "--image", shot, "--option", "A — Mapa", "--option", "B — Lista"], { ...OWNER, OPENMSG_SELF: "cursor:worker" });
+  assert.match(out, /The review [0-9a-f]{8} waits/);
+  fs.rmSync(shot);
+  const row = asks.waiting().find((r) => r.question === "Which concept?");
+  assert.equal(row.kind, "review");
+  assert.deepEqual(row.options, ["A — Mapa", "B — Lista"]);
+  const [copy] = JSON.parse(run(["asks", "--json"])).find((r) => r.id === row.id).images;
+  assert.equal(fs.readFileSync(copy).equals(PNG), true);
+});
+
+test("a review refuses a page, a missing file, and one option", () => {
+  const from = { vendor: "cursor", id: "s-1", name: "worker" };
+  const page = path.join(HOME, "a.html");
+  fs.writeFileSync(page, "<p>");
+  assert.throws(() => asks.put({ from, question: "Q?", images: [page] }), /send a screenshot/);
+  assert.throws(() => asks.put({ from, question: "Q?", images: [path.join(HOME, "none.png")] }), /no file/);
+  assert.throws(() => asks.put({ from, question: "Q?", options: ["only"] }), /two options/);
+  assert.throws(() => asks.put({ from, question: "Q?", options: ["x", "x"] }), /same text/);
+});
+
+test("a review takes a choice and a comment, and not yes or no", () => {
+  const row = asks.waiting().find((r) => r.question === "Which concept?");
+  fails(["answer", row.id, "yes"], OWNER, /is a review/);
+  fails(["answer", row.id, "--choice", "C"], OWNER, /no option "C"/);
+  fails(["answer", row.id, "--comment", "x"], { ...OWNER, CLAUDECODE: "1" }, /only the owner answers/);
+  const copy = path.join(asks.filesDir(), row.images[0]);
+  assert.match(run(["answer", row.id, "--choice", "2", "--comment", "Mais contraste", "--via", "the approval app"]), /"B — Lista" is the answer/);
+  assert.equal(fs.existsSync(copy), false);
+  const inbox = run(["inbox"], { ...OWNER, OPENMSG_SELF: "cursor:worker" });
+  assert.match(inbox, /Question: Which concept\?\nChoice: B — Lista\nComment: Mais contraste/);
+  assert.match(inbox, /the choice and the feedback of your user/);
+  assert.match(run(["asks", "--history"]), /chose: B — Lista\n +comment: Mais contraste/);
+});
+
+test("an approval takes no choice", () => {
+  const row = asks.put({ from: { vendor: "cursor", id: "s-1", name: "worker" }, question: "Push?" });
+  fails(["answer", row.id, "--choice", "1"], OWNER, /takes yes or no/);
+  fails(["answer", row.id], OWNER, /usage/);
+});
