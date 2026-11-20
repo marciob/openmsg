@@ -297,7 +297,9 @@ export function newToken() {
   return crypto.randomBytes(32).toString("base64url");
 }
 
-export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "/mcp", log = () => {} } = {}) {
+// `oauth` is the object of createOAuth in oauth.mjs, for a product that
+// takes no fixed token. A token that it gives works next to the fixed token.
+export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "/mcp", log = () => {}, oauth = null } = {}) {
   if (typeof token !== "string" || token.length < MIN_TOKEN) throw new Error(`the token needs ${MIN_TOKEN} characters or more`);
   const server = createServer({ name });
   // Two digests of one length compare in constant time, whatever the length
@@ -312,14 +314,45 @@ export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "
       res.writeHead(code, { ...(body === null ? {} : { "content-type": "application/json" }), "content-length": Buffer.byteLength(text), "cache-control": "no-store", ...headers });
       res.end(text);
     };
+    const html = (code, text) => {
+      res.writeHead(code, {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": Buffer.byteLength(text),
+        "cache-control": "no-store",
+        // The page cannot go in a frame of another site, so no other site can
+        // hide it and take the click of the owner.
+        "x-frame-options": "DENY",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https:; frame-ancestors 'none'",
+        "referrer-policy": "no-referrer",
+      });
+      res.end(text);
+    };
+    const redirect = (to) => {
+      res.writeHead(302, { location: to, "cache-control": "no-store", "content-length": 0 });
+      res.end();
+    };
     try {
-      if (new URL(req.url, "http://local").pathname !== route) return send(404);
-      if (!crypto.timingSafeEqual(digest(String(req.headers.authorization ?? "")), expected)) {
+      const pathname = new URL(req.url, "http://local").pathname;
+      if (oauth && oauth.handles(pathname)) {
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > MAX_HTTP_BODY) return send(413, { error: "the body is too big" });
+          chunks.push(chunk);
+        }
+        return await oauth.handle(req, pathname, Buffer.concat(chunks).toString("utf8"), { send, html, redirect, pause });
+      }
+      if (pathname !== route) return send(404);
+      const header = String(req.headers.authorization ?? "");
+      const fixed = crypto.timingSafeEqual(digest(header), expected);
+      if (!fixed && !(oauth && oauth.validToken(header))) {
         // A guess costs time, and it learns nothing.
         await pause(300);
         log(`refused a request with no valid token`);
         req.resume();
-        return send(401, { error: "a valid token is required" }, { "www-authenticate": "Bearer" });
+        const challenge = oauth ? `Bearer resource_metadata="${oauth.resourceMetadataUrl}"` : "Bearer";
+        return send(401, { error: "a valid token is required" }, { "www-authenticate": challenge });
       }
       if (req.method !== "POST") return send(405, null, { allow: "POST" });
       const chunks = [];

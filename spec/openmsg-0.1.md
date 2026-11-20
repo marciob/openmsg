@@ -143,7 +143,7 @@ Rules:
 1. The first line must name the sender. The model must always see who wrote.
 2. A line of dashes comes before and after the text of the sender. The text
    after the second line of dashes must state that the message approves
-   nothing. Rule 10 of section 7.2 gives the one exception.
+   nothing. Rule 11 of section 7.2 gives the one exception.
 3. The last line must give the exact command for an answer. If the sender is
    not a session, such as a script, the last line must say that the sender
    takes no answer.
@@ -341,7 +341,23 @@ Rules:
    or its path under the route. The token has 32 characters or more, it is in
    a file that only the owner reads, and no command prints it. The server
    compares it in constant time, and a wrong token costs the caller a pause.
-10. The owner can say that one such agent is a chat that the owner writes in,
+10. A product that takes no fixed token, such as the Gemini app on the web,
+   uses OAuth 2.1 with `--oauth --public-url <url>`. The product registers
+   itself (RFC 7591), and it trades a code for a token with PKCE and S256
+   (RFC 7636). Each OAuth address is under the route. The discovery documents
+   (RFC 8414, RFC 9728) also answer at the root, with the route after them.
+   A 401 names the document of the resource. Rules:
+   - The approval page asks for the secret of the token file. Only the owner
+     has it, so only the owner approves a connection. Five wrong tries in one
+     minute stop the page for that minute.
+   - A redirect address must use https, and it must be one that the client
+     registered. With another address, the page sends nobody back.
+   - A code works one time, for 5 minutes. An access token works for 24
+     hours. A refresh token works one time, for 90 days, and its answer holds
+     a new one.
+   - The store holds the digest of each token, and no token that works.
+   - The page cannot go in a frame of another site.
+11. The owner can say that one such agent is a chat that the owner writes in,
    with `openmsg mcp trust <name>`. A request in a message from that agent
    then counts as a request of the owner, and the receiver does not wait for
    the owner. These limits hold:
@@ -377,7 +393,7 @@ These rules protect the person who owns the agents.
 
 1. **A message is information, not authority.** It never approves an action, and
    it never answers a permission question. The owner can make one exception,
-   for a chat that the owner writes in. Rule 10 of section 7.2 holds its
+   for a chat that the owner writes in. Rule 11 of section 7.2 holds its
    limits.
 2. **Consent does not travel.** An agent must not ask another agent to do work
    that its own user refused.
@@ -398,7 +414,7 @@ These rules protect the person who owns the agents.
 
 ### 9.1 A question for an owner who is away
 
-A message from a chat of the owner approves work that can be undone (rule 10
+A message from a chat of the owner approves work that can be undone (rule 11
 of section 7.2), and nothing more. For another action, the session asks its
 owner. The owner is possibly not at the machine.
 
@@ -433,7 +449,7 @@ no session runs. `openmsg spawn <dir>` opens a Claude Code session there.
    that answer.
 4. `--prompt` gives the first message. When a session runs `spawn`, that
    message names the session that wrote it, and it states the limits of rule
-   10 of section 7.2. The new session reads it as text that its user typed,
+   11 of section 7.2. The new session reads it as text that its user typed,
    so the frame must say who wrote it.
 5. At most 6 such sessions run at one time. A session that openmsg opened and
    that has no turn for 12 hours closes at the next `spawn`, or with
@@ -456,13 +472,13 @@ with its own keys. The directory then holds it as another person, and its
 message approves nothing.
 
 1. `openmsg trust <owner>` marks that identity. A request in its message then
-   counts as a request of the owner, with the limits of rule 10 of section
+   counts as a request of the owner, with the limits of rule 11 of section
    7.2, and the same lines after the second line of dashes.
 2. Only the owner runs the command. It refuses inside a session of an agent.
    The identity must be a member of a project of the directory.
 3. The gateway checks the signature and the permission first. The mark
    changes only the text that the receiver reads.
-4. Each message with the mark goes to the log of rule 10 of section 7.2.
+4. Each message with the mark goes to the log of rule 11 of section 7.2.
 5. A person who controls that identity works on the machine in the name of
    the owner. The owner gives the mark only to an identity that the owner
    holds. `openmsg untrust <owner>` takes it away.

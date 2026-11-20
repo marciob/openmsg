@@ -27,6 +27,7 @@ import * as notes from "./notes.mjs";
 import * as webhooks from "./webhooks.mjs";
 import * as mcpagents from "./mcpagents.mjs";
 import * as mcp from "./mcp.mjs";
+import { createOAuth } from "./oauth.mjs";
 import * as spawn from "./spawn.mjs";
 import * as voiceowners from "./voiceowners.mjs";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
      [--token-file <file>]          the file of that token. openmsg makes it when it is not there
+     [--oauth --public-url <url>]   OAuth too, for a product that takes no fixed token, such as Gemini
   openmsg spawn <dir>               open a Claude Code session there, in tmux, and give its address
      [--account <name>]             the account: "default" is ~/.claude, "work" is ~/.claude-work
      [--prompt "<text>"]            the first message of the session
@@ -400,9 +402,9 @@ async function cmdMcp(args) {
     if (args[i] === "--allow") {
       if (args[i + 1] === undefined) throw new Error('--allow needs an address, such as "claude:*"');
       allow.push(args[++i]);
-    } else if (["--per-minute", "--as", "--port", "--token-file", "--path"].includes(args[i])) {
+    } else if (["--per-minute", "--as", "--port", "--token-file", "--path", "--public-url"].includes(args[i])) {
       i += 1;
-    } else if (args[i] !== "--http") words.push(args[i]);
+    } else if (args[i] !== "--http" && args[i] !== "--oauth") words.push(args[i]);
   }
   const [sub, name] = words;
   if (sub === "serve") {
@@ -421,7 +423,17 @@ async function cmdMcp(args) {
     }
     const token = fs.readFileSync(file, "utf8").trim();
     const stamp = (line) => console.log(`${new Date().toISOString()} ${line}`);
-    const running = await mcp.serveHttp({ name: as, token, port: Number(flag(args, "port") ?? 7812), route: flag(args, "path") ?? "/mcp", log: stamp });
+    const route = flag(args, "path") ?? "/mcp";
+    // OAuth, for a product that takes no fixed token. The owner approves each
+    // connection with the secret of the token file.
+    let oauth = null;
+    if (args.includes("--oauth")) {
+      const publicUrl = flag(args, "public-url");
+      if (!publicUrl) throw new Error("--oauth needs --public-url <the https address of the route, as the network sees it>");
+      oauth = createOAuth({ name: as, ownerSecret: token, publicUrl, route, file: path.join(identity.home(), `mcp-${as}.oauth.json`), log: stamp });
+    }
+    const running = await mcp.serveHttp({ name: as, token, port: Number(flag(args, "port") ?? 7812), route, log: stamp, oauth });
+    if (oauth) stamp(`OAuth: the address for the product is ${flag(args, "public-url")}. The approval page asks for the secret in ${file}`);
     stamp(`mcp:${as} listens on ${running.url}, and each request needs the token in ${file}`);
     stamp('The header of a request: "Authorization: Bearer <token>". A proxy in front gives the address to the network, with TLS.');
     const stop = () => running.close().then(() => process.exit(0));

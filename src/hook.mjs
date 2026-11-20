@@ -140,7 +140,10 @@ export async function runHook(vendor) {
   }
   if (vendor === "gemini") {
     // An AfterAgent hook that denies sends its reason as a new prompt.
-    if (info.event === "SessionStart") return { additional_context: text };
+    // SessionStart gives its text as the first turn of the history.
+    if (info.event === "SessionStart") {
+      return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } };
+    }
     return { decision: "deny", reason: text };
   }
   return { additional_context: text };
