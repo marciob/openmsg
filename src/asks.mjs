@@ -13,6 +13,8 @@ import { randomBytes } from "node:crypto";
 // A question with no answer after this time gets none.
 export const ASK_TTL_MS = 24 * 3600 * 1000;
 export const MAX_QUESTION = 2000;
+// A question with its answer stays this long, as the history of the owner.
+export const HISTORY_MS = 30 * 24 * 3600 * 1000;
 
 function file() {
   return path.join(process.env.OPENMSG_HOME ?? path.join(os.homedir(), ".openmsg"), "asks.json");
@@ -42,8 +44,8 @@ export function put({ from, question, now = Date.now() }) {
     askedAt: new Date(now).toISOString(),
     answer: null,
   };
-  // The answered rows of the last day stay, as a record. Older rows go.
-  save([...read().filter((r) => now - Date.parse(r.askedAt) < ASK_TTL_MS), row]);
+  // Each row stays for 30 days, as a record. Older rows go.
+  save([...read().filter((r) => now - Date.parse(r.askedAt) < HISTORY_MS), row]);
   return row;
 }
 
@@ -53,6 +55,14 @@ export function all() {
 
 export function waiting({ now = Date.now() } = {}) {
   return read().filter((r) => r.answer === null && now - Date.parse(r.askedAt) < ASK_TTL_MS);
+}
+
+// The questions that have an answer, the newest first.
+export function history({ limit = 40 } = {}) {
+  return read()
+    .filter((r) => r.answer !== null)
+    .sort((a, b) => Date.parse(b.answeredAt) - Date.parse(a.answeredAt))
+    .slice(0, limit);
 }
 
 // One question takes one answer. A second answer changes nothing, so an

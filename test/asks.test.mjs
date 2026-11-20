@@ -78,3 +78,16 @@ test("the answer no tells the session not to act, and an old question takes no a
   assert.equal(asks.waiting().some((r) => r.id === old.id), false);
   assert.throws(() => asks.answer(old.id, true), /older than 24 hours/);
 });
+
+test("the history holds each answer, the newest first, and no question that waits", () => {
+  const from = { vendor: "cursor", id: "s-1", name: "worker" };
+  const first = asks.put({ from, question: "First?" });
+  const second = asks.put({ from, question: "Second?" });
+  asks.put({ from, question: "Still waits?" });
+  asks.answer(first.id, false, { now: Date.now() + 1000 });
+  asks.answer(second.id, true, { now: Date.now() + 2000 });
+  const done = asks.history();
+  assert.deepEqual(done.slice(0, 2).map((r) => [r.question, r.answer]), [["Second?", "yes"], ["First?", "no"]]);
+  assert.equal(done.some((r) => r.question === "Still waits?"), false);
+  assert.match(run(["asks", "--history"]), /yes +cursor:worker +through the command line\n +Second\?/);
+});

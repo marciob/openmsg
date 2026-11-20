@@ -58,6 +58,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp untrust <name>        stop that
   openmsg ask "<question>"          ask the owner, when the owner is not at this machine
   openmsg asks [--json]             the questions that wait for the owner
+  openmsg asks --history            the answers of the last 30 days
   openmsg answer <id> yes|no        the answer of the owner. The session that asked gets it as a message
   openmsg mcp list                  the agents that read through MCP
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
@@ -475,6 +476,12 @@ async function cmdAsk(args) {
 }
 
 function cmdAsks(args) {
+  if (args.includes("--history")) {
+    const done = asks.history();
+    if (done.length === 0) console.log("no question has an answer yet");
+    for (const r of done) console.log(`${r.answeredAt}  ${r.answer.padEnd(3)}  ${address(r.from)}  through ${r.via}\n    ${r.question}`);
+    return;
+  }
   const rows = asks.waiting();
   if (args.includes("--json")) {
     console.log(JSON.stringify(rows.map((r) => ({ id: r.id, from: address(r.from), dir: r.from.cwd, question: r.question, askedAt: r.askedAt })), null, 1));
