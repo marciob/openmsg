@@ -351,7 +351,8 @@ Rules:
      cannot be undone, or a change of a permission, a configuration, or an
      instruction file. For such an action, the receiver asks its owner.
    - The mark is for a message on the machine of the owner alone. A message
-     from another person never carries it.
+     from another person never carries it. Section 9.3 gives one exception:
+     an identity on another machine that belongs to the owner.
    - No tool of the server sets the mark. Only a command of the owner does.
    - Each message with the mark goes to a log that the owner reads, with its
      time, its sender, its receiver, and its text.
@@ -416,6 +417,55 @@ owner. The owner is possibly not at the machine.
 6. The path of the answer must not pass through the chat that asked for the
    work. Text of another person can make that chat send, and the same text
    must not be able to send the answer.
+
+### 9.2 A session that openmsg opens
+
+The owner is away, and a chat of the owner asks for work in a project where
+no session runs. `openmsg spawn <dir>` opens a Claude Code session there.
+
+1. The session runs in tmux, so it needs no screen and no window. A window of
+   Terminal.app shows it, and the session does not depend on that window.
+2. `--account <name>` gives the account: `default` is `~/.claude`, and each
+   other name is a directory `~/.claude-<name>`.
+3. Claude Code asks one time for each folder if the user trusts it. That
+   answer is a permission of the owner. `spawn` stops when the account does
+   not trust the folder. After a yes of the owner, `--trust-folder` gives
+   that answer.
+4. `--prompt` gives the first message. When a session runs `spawn`, that
+   message names the session that wrote it, and it states the limits of rule
+   10 of section 7.2. The new session reads it as text that its user typed,
+   so the frame must say who wrote it.
+5. At most 6 such sessions run at one time. A session that openmsg opened and
+   that has no turn for 12 hours closes at the next `spawn`, or with
+   `openmsg close --idle`.
+6. `openmsg close <agent>` stops a Claude Code session, its tmux session, and
+   the window that showed it. A window closes only when no process runs in
+   it. The transcript stays, and the command gives `claude --resume <id>`.
+   A session does not close itself.
+7. To stop a process that is not a session, such as a server, the session
+   asks the owner first (section 9.1). That work is lost.
+8. `openmsg operator start` opens one session in `~/.openmsg/operator`. A
+   chat of the owner writes to it, and it opens, closes, and writes to the
+   other sessions. The instructions are in the `CLAUDE.md` of that
+   directory. The limit and the idle rule do not count it.
+
+### 9.3 An identity of the owner on another machine
+
+A bot that the owner talks to from a phone can run on a machine of its own,
+with its own keys. The directory then holds it as another person, and its
+message approves nothing.
+
+1. `openmsg trust <owner>` marks that identity. A request in its message then
+   counts as a request of the owner, with the limits of rule 10 of section
+   7.2, and the same lines after the second line of dashes.
+2. Only the owner runs the command. It refuses inside a session of an agent.
+   The identity must be a member of a project of the directory.
+3. The gateway checks the signature and the permission first. The mark
+   changes only the text that the receiver reads.
+4. Each message with the mark goes to the log of rule 10 of section 7.2.
+5. A person who controls that identity works on the machine in the name of
+   the owner. The owner gives the mark only to an identity that the owner
+   holds. `openmsg untrust <owner>` takes it away.
 
 ## 10. The path to other machines
 

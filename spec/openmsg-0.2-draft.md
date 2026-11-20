@@ -192,6 +192,9 @@ Rules:
 ## 6. Authorization
 
 1. A message never expands authority. This rule of 0.1 holds across people.
+   One exception: the owner can mark an identity that the owner holds on
+   another machine, such as a bot, with `openmsg trust`. Section 9.3 of the
+   spec of 0.1 holds its limits.
 2. The owner of the receiving agent sets a standing permission for each identity
    and project: `accept`, `hold`, or `refuse`. The value applies to one project,
    not to everything.

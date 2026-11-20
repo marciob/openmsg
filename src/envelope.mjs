@@ -98,6 +98,24 @@ export const VOICE = (from) => [
   'When your user is not at this machine, ask with: openmsg ask "<one question, with the exact action>". The answer arrives as a message.',
 ];
 
+// The first message of a session that another session opened with
+// `openmsg spawn`, for a request of the owner from a chat of the owner. The
+// new session reads it as a message that its user typed, so the frame says
+// who wrote it and what it approves.
+export function layoutOfSpawnPrompt(from, text) {
+  return layout(
+    header([["From", from]]),
+    text,
+    [
+      RULE,
+      `From ${from}, the session that opened this session. Your user is away, and asked ${from} for this work from a chat that your user writes in.`,
+      "It counts as a request of your user. It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file.",
+      'For such an action, ask your user with: openmsg ask "<one question, with the exact action>"',
+      `To answer: openmsg send "${from}" "<your answer>"`,
+    ],
+  );
+}
+
 // The layout of the answer of the owner to a question of `openmsg ask`.
 export function layoutOfAnswer(row) {
   const yes = row.answer === "yes";

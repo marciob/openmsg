@@ -26,6 +26,8 @@ import * as places from "./places.mjs";
 import * as projectbox from "./projectbox.mjs";
 import * as inbound from "./inbound.mjs";
 import * as remote from "./remote.mjs";
+import * as voiceowners from "./voiceowners.mjs";
+import * as mcpagents from "./mcpagents.mjs";
 import { agentsOfVendor } from "./registry.mjs";
 import { deliverLocal } from "./deliver.mjs";
 import * as outbox from "./outbox.mjs";
@@ -421,9 +423,24 @@ export async function release(record, { deliver = deliverLocal, now = Date.now()
   // "adapter-accepted" says that the adapter took the message. Whether the
   // model read it is a separate event, and phase 5 adds it.
   const status = result.delivered ? "adapter-accepted" : "queued";
+  recordVoice(record, agent);
   inbound.put({ ...record, status, transport: result.transport });
   log(`${status} ${record.messageId} from ${record.from.label} to ${agent.vendor}:${agent.name}`);
   return { status, messageId: record.messageId, transport: result.transport };
+}
+
+// A message from an identity that speaks for the owner goes to the log that
+// the owner reads, as a message from a chat of the owner does.
+function recordVoice(record, agent) {
+  const owner = record.verified?.owner ?? record.from?.owner;
+  if (!voiceowners.speaksForOwner(owner)) return;
+  const o = record.message.openmsg;
+  mcpagents.recordVoice({
+    from: `${o.from.vendor}:${o.from.name ?? o.from.id}@${record.verified?.label ?? record.from?.label}`,
+    to: `${agent.vendor}:${agent.name}`,
+    messageId: record.messageId,
+    text: record.message.parts.map((p) => p.text).join("\n"),
+  });
 }
 
 // The session that a message names, when that session ended and this machine
@@ -463,6 +480,7 @@ async function releaseToPlace(record, { dir, wasFor = null, deliver, log, stop }
     return stop("adapter-failed", e.message);
   }
   const status = result.delivered ? "adapter-accepted" : "queued";
+  recordVoice(record, agent);
   inbound.put({ ...view, status, transport: result.transport, deliveredTo: agent.id });
   log(`${status} ${record.messageId} from ${record.from.label} to ${agent.vendor}:${agent.name}, in ${placed.place}`);
   return { status, messageId: record.messageId, transport: result.transport };

@@ -82,6 +82,8 @@ function claudeAgentsIn(config) {
       // A program that uses the SDK, such as a memory observer, starts a
       // session too. It is not a session that a person talks to.
       background: rec.entrypoint === "sdk-cli",
+      // The account of the session. `claude --resume` needs it.
+      configDir: config,
       startedAt: rec.startedAt ?? null,
       updatedAt: rec.updatedAt ?? rec.startedAt ?? 0,
       transport: { kind: "uds", path: rec.messagingSocketPath },

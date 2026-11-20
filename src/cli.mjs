@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // openmsg: send a message from one AI coding agent to another.
 import { allAgents, findAgent, self, claudeAgents } from "./registry.mjs";
-import { createMessage, address, textOf, MAX_HOPS, layoutOfAnswer, compose } from "./envelope.mjs";
+import { createMessage, address, textOf, MAX_HOPS, layoutOfAnswer, layoutOfSpawnPrompt, compose } from "./envelope.mjs";
 import * as asks from "./asks.mjs";
 import * as mailbox from "./mailbox.mjs";
 import * as projectbox from "./projectbox.mjs";
@@ -27,6 +27,8 @@ import * as notes from "./notes.mjs";
 import * as webhooks from "./webhooks.mjs";
 import * as mcpagents from "./mcpagents.mjs";
 import * as mcp from "./mcp.mjs";
+import * as spawn from "./spawn.mjs";
+import * as voiceowners from "./voiceowners.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -64,6 +66,16 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
      [--token-file <file>]          the file of that token. openmsg makes it when it is not there
+  openmsg spawn <dir>               open a Claude Code session there, in tmux, and give its address
+     [--account <name>]             the account: "default" is ~/.claude, "work" is ~/.claude-work
+     [--prompt "<text>"]            the first message of the session
+     [--trust-folder]               say yes to the folder question of Claude Code. Ask your user first
+     [--no-window]                  open no window of Terminal.app
+  openmsg spawn --list              the sessions that openmsg opened, and the accounts
+  openmsg close <agent>             stop a session. Its transcript stays, for claude --resume
+  openmsg close --idle [<hours>]    stop each session that openmsg opened and that had no turn (12 hours)
+  openmsg operator start            open the session that a chat of yours talks to, in ~/.openmsg/operator
+     [--account <name>]
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
   openmsg install --hooks           add the hooks for claude, cursor, and gemini
@@ -87,6 +99,8 @@ For the agents of another person, on another machine:
   openmsg unpublish <alias>         take a session back
   openmsg unpublish --all           go back to the sessions that you named
   openmsg permit <owner> <accept|hold|refuse>
+  openmsg trust <owner>             that identity is yours, such as a bot: its request counts as yours
+  openmsg untrust <owner>           stop that
   openmsg held [<id>] [--text]      the messages that wait for you
   openmsg held --all                every message from another person, and its state
   openmsg accept <id> [--always]    give a held message to the agent
@@ -459,6 +473,145 @@ async function cmdMcp(args) {
     return;
   }
   throw new Error("usage: openmsg mcp add <name> | mcp remove <name> | mcp trust <name> | mcp untrust <name> | mcp list | mcp serve --as <name>");
+}
+
+// A session that openmsg opens for a chat of the owner. The owner is away,
+// and no session runs in that project yet.
+async function cmdSpawn(args) {
+  if (args.includes("--list")) {
+    const rows = spawn.running();
+    if (rows.length === 0) console.log("openmsg opened no session that runs now");
+    for (const r of rows) console.log(`${(r.address ?? "(no address yet)").padEnd(28)} ${r.tmux}  ${r.account}  ${r.dir}  since ${r.startedAt}`);
+    console.log(`accounts: ${spawn.accounts().map((a) => `${a.name} (${a.dir})`).join(", ")}`);
+    console.log(`at most ${process.env.OPENMSG_SPAWN_MAX ?? spawn.DEFAULT_MAX} at one time. To look at one: tmux attach -t <tmux name>`);
+    return;
+  }
+  const [dir] = positional(args, ["account", "prompt"]);
+  if (!dir) throw new Error('usage: openmsg spawn <dir> [--account <name>] [--prompt "<text>"] [--trust-folder] [--no-window]');
+  // A session that waits too long for a turn closes first, so it takes no place.
+  for (const { row, agent } of spawn.idle()) {
+    const done = await spawn.close({ agent, tmuxName: row.tmux });
+    if (done.stopped) console.log(`closed ${row.address ?? row.tmux}: no turn for ${spawn.DEFAULT_IDLE_HOURS} hours`);
+  }
+  // A session that runs this command writes the first message for the owner.
+  // The new session must see that, and not a message that its user typed.
+  let prompt = flag(args, "prompt");
+  if (prompt && AGENT_ENV.some((name) => process.env[name])) {
+    const from = await self();
+    if (from && !from.unresolved) prompt = compose(layoutOfSpawnPrompt(address(from), prompt));
+  }
+  const out = await spawn.open({
+    dir,
+    account: flag(args, "account"),
+    prompt,
+    trustFolder: args.includes("--trust-folder"),
+    view: !args.includes("--no-window"),
+  });
+  if (!out.agent) {
+    const why = out.alive
+      ? "it runs, but discovery does not find it yet. Look again with: openmsg list"
+      : "it stopped before it started. Look at: tmux ls";
+    console.log(`opened ${out.tmux} in ${out.dir}, and ${why}`);
+    return;
+  }
+  console.log(`opened claude:${out.agent.name} in ${out.dir}, with the account ${out.account}`);
+  console.log(`To write to it: openmsg send "claude:${out.agent.name}" "<text>"`);
+  console.log(`To close it: openmsg close "claude:${out.agent.name}"`);
+  console.log(`It runs in tmux as ${out.tmux}${out.viewed ? ", and a window of Terminal.app shows it" : ""}. To look at it: tmux attach -t ${out.tmux}`);
+}
+
+async function cmdClose(args) {
+  if (args.includes("--idle")) {
+    const [hours] = positional(args.filter((a) => a !== "--idle"));
+    const rows = spawn.idle({ hours: hours === undefined ? spawn.DEFAULT_IDLE_HOURS : Number(hours) });
+    if (rows.length === 0) console.log("no session that openmsg opened is idle that long");
+    for (const { row, agent } of rows) {
+      const done = await spawn.close({ agent, tmuxName: row.tmux });
+      console.log(`${done.stopped ? "closed" : "could not close"} ${row.address ?? row.tmux}`);
+    }
+    return;
+  }
+  const [target] = positional(args);
+  if (!target) throw new Error("usage: openmsg close <agent> | close --idle [<hours>]");
+  let agent = null;
+  let tmuxName = null;
+  if (/^om-/.test(target)) tmuxName = target;
+  else {
+    agent = await findAgent(target);
+    if (sameSession(agent, await self())) {
+      throw new Error(`${address(agent)} is this session. A session does not close itself with openmsg`);
+    }
+    // A program, a chat, or a webhook agent has no process on this machine.
+    if (!agent.pid || !["claude", "codex", "opencode", "cursor", "gemini"].includes(agent.vendor)) {
+      throw new Error(`${address(agent)} has no process on this machine, so there is nothing to close`);
+    }
+    if (agent.vendor !== "claude") {
+      throw new Error(`openmsg closes a Claude Code session only. ${address(agent)} is ${agent.vendor}`);
+    }
+  }
+  const done = await spawn.close({ agent, tmuxName });
+  if (!done.stopped) throw new Error(`${target} did not stop. Its process can still run: look at it with ps`);
+  console.log(`closed ${agent ? address(agent) : target}${done.opened ? ", and its tmux session" : ""}`);
+  const again = spawn.resumeCommand(done);
+  if (again) console.log(`The transcript stays. To open it again: ${again}`);
+}
+
+const OPERATOR_DIR = () => path.join(identity.home(), "operator");
+
+// The session that a chat of the owner talks to. It opens sessions, closes
+// them, and writes to them. Its instructions are in the CLAUDE.md of its
+// directory, and the owner can change that file.
+async function cmdOperator(args) {
+  const [sub] = positional(args, ["account"]);
+  if (sub !== "start") throw new Error("usage: openmsg operator start [--account <name>]");
+  const dir = OPERATOR_DIR();
+  fs.mkdirSync(dir, { recursive: true });
+  const instructions = path.join(dir, "CLAUDE.md");
+  if (!fs.existsSync(instructions)) {
+    const template = fileURLToPath(new URL("../operator/CLAUDE.md", import.meta.url));
+    fs.copyFileSync(template, instructions);
+    console.log(`wrote ${instructions}`);
+  }
+  const real = fs.realpathSync(dir);
+  const live = claudeAgents().find((a) => a.cwd && fs.existsSync(a.cwd) && fs.realpathSync(a.cwd) === real && !a.background);
+  if (live) {
+    console.log(`the operator runs already: claude:${live.name}`);
+  } else {
+    const out = await spawn.open({
+      dir,
+      account: flag(args, "account"),
+      // The owner runs this command, and the folder holds only the file above.
+      trustFolder: true,
+      role: "operator",
+      view: !args.includes("--no-window"),
+    });
+    if (!out.agent) throw new Error(`the operator did not start. Look at: tmux attach -t ${out.tmux}`);
+    console.log(`the operator runs: claude:${out.agent.name}, in tmux as ${out.tmux}`);
+  }
+  const label = identity.exists() ? identity.load().label : "<your label>";
+  console.log(`A chat or a bot of yours writes to it with: openmsg send "project:${path.basename(dir)}@${label}" "<text>"`);
+  console.log(`On this machine: openmsg send "project:${dir}" "<text>"`);
+}
+
+// An identity on another machine that belongs to the owner, such as a bot.
+// Only the owner runs this command.
+function cmdTrust(args, on) {
+  const [who] = positional(args, ["project"]);
+  if (!who) throw new Error(`usage: openmsg ${on ? "trust" : "untrust"} <owner>`);
+  if (AGENT_ENV.some((name) => process.env[name])) {
+    throw new Error("only the owner changes this mark. This command runs inside a session of an agent");
+  }
+  const member = memberOf(projectId(args), who);
+  if (identity.exists() && member.ownerId === identity.load().ownerId) throw new Error("that is your own identity on this machine");
+  voiceowners.set(member.ownerId, member.label, on);
+  if (!on) {
+    console.log(`A message from ${member.label} is a message from another person again. It approves no action.`);
+    return;
+  }
+  console.log(`A request from ${member.label} (${member.ownerId}) now counts as a request of yours, for each session on this machine.`);
+  console.log("It does not approve an action that deletes data, that cannot be undone, or that changes a permission.");
+  console.log(`Give this mark only to an identity that is yours, such as your own bot. Whoever controls ${member.label} then works on this machine in your name.`);
+  console.log(`Each such message is in ${path.join(identity.home(), "voice.jsonl")}. To stop: openmsg untrust ${member.label}`);
 }
 
 // An agent asks its owner, and the owner is not at the machine.
@@ -1305,6 +1458,11 @@ try {
   else if (cmd === "ask") await cmdAsk(args);
   else if (cmd === "asks") cmdAsks(args);
   else if (cmd === "answer") await cmdAnswer(args);
+  else if (cmd === "spawn") await cmdSpawn(args);
+  else if (cmd === "close") await cmdClose(args);
+  else if (cmd === "operator") await cmdOperator(args);
+  else if (cmd === "trust") cmdTrust(args, true);
+  else if (cmd === "untrust") cmdTrust(args, false);
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);
 } catch (e) {
