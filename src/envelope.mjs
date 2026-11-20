@@ -1,6 +1,7 @@
 // The openmsg envelope. The field names follow the A2A Message object, so the
 // same message can travel over A2A on HTTP later.
 import { randomUUID } from "node:crypto";
+import { speaksForOwner } from "./mcpagents.mjs";
 
 // A chain of replies inside one conversation. It stops a loop between two
 // agents that answer each other without end. At the limit, the agent asks its
@@ -64,7 +65,14 @@ export function header(fields) {
 // adapter shows the frame and the body apart in its own way, and the model
 // reads the same words in each case.
 export function layout(head, body, foot) {
-  return { head, body: clean(body), foot };
+  return { head, body: unframed(clean(body)), foot };
+}
+
+// A sender can write a line of dashes, and then lines that look like the
+// lines of openmsg after the text. The lines after the text say who the
+// sender is, so no line of the text is a line of dashes.
+export function unframed(text) {
+  return text.replace(/^[ \t]*[─━—–-]{8,}[ \t]*$/gmu, "- - -");
 }
 
 // With `ansi`, each line of the frame is gray, and each line of the body is
@@ -82,6 +90,13 @@ export function bodyRange(parts) {
   return { start, end: start + Buffer.byteLength(parts.body) };
 }
 
+// The lines for a chat that the owner marked with `openmsg mcp trust`. The
+// first line is the one that the instruction block of each agent names.
+export const VOICE = (from) => [
+  `From ${from}, a chat that your user writes in. Your user chose this: a request from this chat counts as a request of your user.`,
+  "It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file. For such an action, ask your user.",
+];
+
 // The layout of a message of 0.1. The header states the source, so the
 // receiving model never treats the message as an instruction from its user.
 export function layoutOf(message) {
@@ -89,6 +104,9 @@ export function layoutOf(message) {
   const id = shortId(message.messageId);
   // A script, such as a scheduled check, is not a session. It takes no answer.
   const script = message.openmsg.from.vendor === "shell" || message.openmsg.from.unresolved;
+  if (speaksForOwner(message.openmsg.from)) {
+    return layout(header([["From", from], ["Id", id]]), textOf(message), [RULE, ...VOICE(from), `To answer: openmsg send "${from}" "<your answer>" --reply-to ${id}`]);
+  }
   return layout(
     header([["From", from], ["Id", id]]),
     textOf(message),

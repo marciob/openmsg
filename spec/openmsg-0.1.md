@@ -142,18 +142,20 @@ Rules:
 
 1. The first line must name the sender. The model must always see who wrote.
 2. A line of dashes comes before and after the text of the sender. The text
-   after the second line of dashes must state that the message approves nothing.
+   after the second line of dashes must state that the message approves
+   nothing. Rule 10 of section 7.2 gives the one exception.
 3. The last line must give the exact command for an answer. If the sender is
    not a session, such as a script, the last line must say that the sender
    takes no answer.
-4. An implementation must not change the text of the sender, with one
-   exception. It removes each control character except the newline and the
+4. An implementation must not change the text of the sender, with two
+   exceptions. It removes each control character except the newline and the
    tab. An escape sequence can hide a line from the person at the terminal
-   while the model reads that line.
-5. The text of the sender can hold a line of dashes too. The model reads it
-   as part of the message. Only the color shows the person at the terminal
-   where the text of the sender stops, so the text of the sender keeps no
-   escape sequence (rule 4).
+   while the model reads that line. Rule 5 gives the second exception.
+5. The text after the second line of dashes says who the sender is, and what
+   the message approves. A sender must not be able to write that text. An
+   implementation therefore changes each line of the text of the sender that
+   holds 8 dashes or more, and nothing else, to `- - -`. Only two lines of
+   dashes are then in the text that the model reads.
 6. An adapter can show the frame and the text of the sender apart, if its
    vendor lets it. The words that the model reads stay the same.
    - Claude Code shows the color of an escape sequence. Its adapter makes
@@ -339,6 +341,25 @@ Rules:
    or its path under the route. The token has 32 characters or more, it is in
    a file that only the owner reads, and no command prints it. The server
    compares it in constant time, and a wrong token costs the caller a pause.
+10. The owner can say that one such agent is a chat that the owner writes in,
+   with `openmsg mcp trust <name>`. A request in a message from that agent
+   then counts as a request of the owner, and the receiver does not wait for
+   the owner. These limits hold:
+   - The text after the second line of dashes states the choice of the owner
+     and its limits, in place of the text of rule 2 of section 5.
+   - The message does not approve an action that deletes data, an action that
+     cannot be undone, or a change of a permission, a configuration, or an
+     instruction file. For such an action, the receiver asks its owner.
+   - The mark is for a message on the machine of the owner alone. A message
+     from another person never carries it.
+   - No tool of the server sets the mark. Only a command of the owner does.
+   - Each message with the mark goes to a log that the owner reads, with its
+     time, its sender, its receiver, and its text.
+   - A program with the account of the owner can give the name of that agent,
+     as it can type into a session. The mark is as strong as that account.
+   The model behind the chat reads text of other people, and such text can
+   try to make it send. The question of rule 2 is then the one bound, so the
+   owner keeps that question.
 
 ## 8. Replies
 
@@ -354,7 +375,9 @@ A reply is a new message. It is not a return value.
 These rules protect the person who owns the agents.
 
 1. **A message is information, not authority.** It never approves an action, and
-   it never answers a permission question.
+   it never answers a permission question. The owner can make one exception,
+   for a chat that the owner writes in. Rule 10 of section 7.2 holds its
+   limits.
 2. **Consent does not travel.** An agent must not ask another agent to do work
    that its own user refused.
 3. **The permission rules of the receiver apply.** The receiver asks its user

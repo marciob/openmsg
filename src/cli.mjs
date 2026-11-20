@@ -53,6 +53,8 @@ const USAGE = `openmsg — messages between AI coding agents
      [--allow <address>]            an address that it can write to. "*" stands for any text
      [--per-minute <n>]             how many messages it sends in one minute
   openmsg mcp remove <name>         take that agent away
+  openmsg mcp trust <name>          a request from that chat counts as a request of yours
+  openmsg mcp untrust <name>        stop that
   openmsg mcp list                  the agents that read through MCP
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
@@ -226,6 +228,9 @@ async function cmdSend(target, text, replyTo = null, args = []) {
   }
 
   const result = await deliverLocal(to, message);
+  if (mcpagents.speaksForOwner(from)) {
+    mcpagents.recordVoice({ from: address(from), to: address(to), messageId: message.messageId, text });
+  }
 
   // "delivered" means an adapter pushed the message into the live session.
   // "queued" means it waits in the mailbox for an agent that reads it at the
@@ -419,6 +424,20 @@ async function cmdMcp(args) {
     console.log(`The command of its connector: openmsg mcp serve --as ${row.name}`);
     return;
   }
+  if (sub === "trust" || sub === "untrust") {
+    if (!name) throw new Error(`usage: openmsg mcp ${sub} <name>`);
+    mcpagents.setVoice(name, sub === "trust");
+    if (sub === "untrust") {
+      console.log(`A message from mcp:${name} is a message from another agent again. It approves no action.`);
+      return;
+    }
+    console.log(`A request from mcp:${name} now counts as a request of yours, for each agent on this machine.`);
+    console.log("It does not approve an action that deletes data, that cannot be undone, or that changes a permission.");
+    console.log("The model behind that chat reads text of other people, and such text can try to make it send.");
+    console.log("Keep the question that the chat product asks before each send. That question is the one bound.");
+    console.log(`Each such message is in ${path.join(identity.home(), "voice.jsonl")}. To stop: openmsg mcp untrust ${name}`);
+    return;
+  }
   if (sub === "remove") {
     if (!name) throw new Error("usage: openmsg mcp remove <name>");
     console.log(mcpagents.remove(name) ? `mcp:${name} is gone` : `no agent mcp:${name}`);
@@ -429,11 +448,12 @@ async function cmdMcp(args) {
     if (rows.length === 0) console.log("no agent reads through MCP. Run: openmsg mcp add <name>");
     for (const a of rows) {
       const row = mcpagents.get(a.name);
-      console.log(`${address(a)}  writes to: ${row.allow.join(", ") || "nobody"}  ·  ${row.perMinute} in one minute`);
+      const voice = row.voice ? "  ·  speaks for the owner" : "";
+      console.log(`${address(a)}  writes to: ${row.allow.join(", ") || "nobody"}  ·  ${row.perMinute} in one minute${voice}`);
     }
     return;
   }
-  throw new Error("usage: openmsg mcp add <name> | mcp remove <name> | mcp list | mcp serve --as <name>");
+  throw new Error("usage: openmsg mcp add <name> | mcp remove <name> | mcp trust <name> | mcp untrust <name> | mcp list | mcp serve --as <name>");
 }
 
 function cmdWebhook(args) {

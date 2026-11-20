@@ -50,9 +50,48 @@ export function add(name, { allow = [], perMinute = null } = {}) {
     allow: allow.length > 0 ? allow : (before?.allow ?? []),
     perMinute: perMinute ?? before?.perMinute ?? DEFAULT_PER_MINUTE,
     addedAt: before?.addedAt ?? new Date().toISOString(),
+    // A change of the addresses does not change the decision of the owner.
+    ...(before?.voice ? { voice: true } : {}),
   };
   save(data);
   return { name, ...data[name] };
+}
+
+// The owner can say that one chat is a place where the owner writes. A
+// request from that chat then counts as a request of the owner, inside the
+// limits that the text of the message gives. Only the owner runs this
+// command: no tool of the MCP server reaches it.
+export function setVoice(name, on) {
+  const data = read();
+  if (!data[name]) throw new Error(`no agent mcp:${name}. Run: openmsg mcp add ${name}`);
+  if (on) data[name].voice = true;
+  else delete data[name].voice;
+  save(data);
+  return { name, ...data[name] };
+}
+
+export function speaksForOwner(agent) {
+  return agent?.vendor === "mcp" && !agent.unresolved && read()[agent.name]?.voice === true;
+}
+
+// One line for each message that went out with the voice of the owner. The
+// owner reads this file to see what a chat asked for in the name of the owner.
+function voiceFile() {
+  return path.join(path.dirname(file()), "voice.jsonl");
+}
+
+export function recordVoice({ from, to, messageId, text }) {
+  const line = { at: new Date().toISOString(), from, to, messageId, text };
+  fs.mkdirSync(path.dirname(voiceFile()), { recursive: true });
+  fs.appendFileSync(voiceFile(), JSON.stringify(line) + "\n", { mode: 0o600 });
+}
+
+export function voiceLog() {
+  try {
+    return fs.readFileSync(voiceFile(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
 }
 
 export function remove(name) {
