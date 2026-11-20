@@ -20,8 +20,9 @@ this session.
 | See the sessions that you opened | `openmsg spawn --list` |
 | Ask your user | `openmsg ask "<one question, with the exact action>"` |
 
-The projects are in `~/Desktop/dev`. When your user names a project, find
-its directory there with `ls`.
+When your user names a project, find its directory with `ls`. `openmsg list`
+gives the directory of each session that runs, so start there. Your user can
+write here the directory that holds the projects.
 
 ## How to work
 

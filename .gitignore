@@ -149,3 +149,6 @@ ai-docs/
 # The documents stay on this machine. The specs, the plans, and the research
 # are working material, and the repository carries the code.
 docs/
+
+# The notes of the agent sessions on this machine. They hold details of the machine.
+/CLAUDE.md
