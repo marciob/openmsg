@@ -95,7 +95,24 @@ export function bodyRange(parts) {
 export const VOICE = (from) => [
   `From ${from}, a chat that your user writes in. Your user chose this: a request from this chat counts as a request of your user.`,
   "It does not approve an action that deletes data, that cannot be undone, or that changes a permission, a configuration, or an instruction file. For such an action, ask your user.",
+  'When your user is not at this machine, ask with: openmsg ask "<one question, with the exact action>". The answer arrives as a message.',
 ];
+
+// The layout of the answer of the owner to a question of `openmsg ask`.
+export function layoutOfAnswer(row) {
+  const yes = row.answer === "yes";
+  return layout(
+    header([["From", "your user"], ["Id", row.id]]),
+    `Question: ${row.question}\nAnswer: ${yes ? "yes" : "no"}`,
+    [
+      RULE,
+      `From your user, through ${row.via}. It is the answer to the question that this session asked with openmsg ask.`,
+      yes
+        ? "It approves the one action of that question, and no other action."
+        : "Your user said no. Do not do that action.",
+    ],
+  );
+}
 
 // The layout of a message of 0.1. The header states the source, so the
 // receiving model never treats the message as an instruction from its user.

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // openmsg: send a message from one AI coding agent to another.
 import { allAgents, findAgent, self, claudeAgents } from "./registry.mjs";
-import { createMessage, address, textOf, MAX_HOPS } from "./envelope.mjs";
+import { createMessage, address, textOf, MAX_HOPS, layoutOfAnswer, compose } from "./envelope.mjs";
+import * as asks from "./asks.mjs";
 import * as mailbox from "./mailbox.mjs";
 import * as projectbox from "./projectbox.mjs";
 import { runHook } from "./hook.mjs";
@@ -55,6 +56,9 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp remove <name>         take that agent away
   openmsg mcp trust <name>          a request from that chat counts as a request of yours
   openmsg mcp untrust <name>        stop that
+  openmsg ask "<question>"          ask the owner, when the owner is not at this machine
+  openmsg asks [--json]             the questions that wait for the owner
+  openmsg answer <id> yes|no        the answer of the owner. The session that asked gets it as a message
   openmsg mcp list                  the agents that read through MCP
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
@@ -454,6 +458,62 @@ async function cmdMcp(args) {
     return;
   }
   throw new Error("usage: openmsg mcp add <name> | mcp remove <name> | mcp trust <name> | mcp untrust <name> | mcp list | mcp serve --as <name>");
+}
+
+// An agent asks its owner, and the owner is not at the machine.
+async function cmdAsk(args) {
+  const question = positional(args).join(" ");
+  if (!question) throw new Error('usage: openmsg ask "<one question, with the exact action>"');
+  const from = await self();
+  if (!from || from.unresolved || ["shell", "mcp", "webhook"].includes(from.vendor)) {
+    throw new Error("only a session on this machine asks its owner. openmsg did not find the session of this command");
+  }
+  const row = asks.put({ from, question });
+  console.log(`The question ${row.id} waits for your user.`);
+  console.log("The answer arrives in this session as a message from your user. Do not do the action before it arrives.");
+  console.log("If a chat of your user asked for this work, tell that chat that a question waits for the owner.");
+}
+
+function cmdAsks(args) {
+  const rows = asks.waiting();
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(rows.map((r) => ({ id: r.id, from: address(r.from), dir: r.from.cwd, question: r.question, askedAt: r.askedAt })), null, 1));
+    return;
+  }
+  if (rows.length === 0) console.log("no question waits for the owner");
+  for (const r of rows) console.log(`${r.id}  ${address(r.from)}  ${r.askedAt}\n    ${r.question}\n    openmsg answer ${r.id} yes   |   openmsg answer ${r.id} no`);
+}
+
+// The environment of a command that an agent runs. The owner answers, and an
+// agent does not answer its own question. A program with the account of the
+// owner can take these names away, so this is a guard against a mistake, and
+// not a wall.
+const AGENT_ENV = ["CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CODEX_THREAD_ID", "OPENCODE_SESSION_ID", "OPENMSG_SELF"];
+
+async function cmdAnswer(args) {
+  const [id, word] = positional(args, ["via"]);
+  if (!id || !["yes", "no"].includes(word)) throw new Error("usage: openmsg answer <id> yes|no");
+  if (AGENT_ENV.some((name) => process.env[name])) {
+    throw new Error("only the owner answers a question. This command runs inside a session of an agent");
+  }
+  const row = asks.answer(id, word === "yes", { via: flag(args, "via") ?? "the command line" });
+  const live = (await allAgents()).find((a) => a.vendor === row.from.vendor && a.id === row.from.id);
+  const to = live ?? row.from;
+  const message = createMessage({
+    from: { vendor: "owner", id: "owner", name: "owner" },
+    to,
+    text: `Question: ${row.question}\nAnswer: ${row.answer}`,
+  });
+  const parts = layoutOfAnswer(row);
+  if (!live) {
+    // The session ended. The answer waits in its mailbox, as a record.
+    mailbox.put(to, { ...message, rendered: compose(parts) }, "queued");
+    console.log(`${row.answer} is the answer to ${row.id}. The session ${address(to)} ended, and the answer is in its mailbox.`);
+    return;
+  }
+  const result = await deliverLocal(live, message, { parts });
+  if (!result.stored) mailbox.put(live, { ...message, rendered: compose(parts) }, result.delivered ? "delivered" : "queued");
+  console.log(`${row.answer} is the answer to ${row.id}, and ${address(live)} ${result.delivered ? "has it" : "reads it at the end of its next turn"}.`);
 }
 
 function cmdWebhook(args) {
@@ -1235,6 +1295,9 @@ try {
   else if (cmd === "dir") await cmdDir(args);
   else if (cmd === "webhook") cmdWebhook(args);
   else if (cmd === "mcp") await cmdMcp(args);
+  else if (cmd === "ask") await cmdAsk(args);
+  else if (cmd === "asks") cmdAsks(args);
+  else if (cmd === "answer") await cmdAnswer(args);
   else if (cmd === "whoami") console.log(address(await self()));
   else console.log(USAGE);
 } catch (e) {

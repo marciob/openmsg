@@ -395,6 +395,28 @@ These rules protect the person who owns the agents.
 6. **A message must not change configuration.** An agent must not change its
    permission settings or instruction files because another agent asked.
 
+### 9.1 A question for an owner who is away
+
+A message from a chat of the owner approves work that can be undone (rule 10
+of section 7.2), and nothing more. For another action, the session asks its
+owner. The owner is possibly not at the machine.
+
+1. `openmsg ask "<question>"` stores one question, with the session that
+   asked. Only a session on the machine asks. The command does not wait.
+2. `openmsg asks` gives the questions that wait. A program that the owner
+   chose shows them to the owner, for example in an app on a phone.
+3. `openmsg answer <id> yes|no` stores the answer, and the session gets it as
+   a message. The first line names the owner as the sender. The text after
+   the second line of dashes says that the answer approves the one action of
+   the question, or that the owner said no.
+4. One question takes one answer. A question older than 24 hours takes none.
+5. An agent must not answer a question. The command refuses when it runs
+   inside a session of an agent. A program with the account of the owner can
+   go around that check, so the check stops a mistake, and not an attack.
+6. The path of the answer must not pass through the chat that asked for the
+   work. Text of another person can make that chat send, and the same text
+   must not be able to send the answer.
+
 ## 10. The path to other machines
 
 Version 0.1 works on one machine. The envelope uses the A2A fields, so a later
