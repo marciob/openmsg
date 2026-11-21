@@ -113,6 +113,8 @@ export function routingOf(projectId, ownerId) {
 
 // The agents of other people, from the last routing data that this machine
 // holds. A revoked member gives no row, and one address gives one row.
+export const STALE_MS = 10 * 60 * 1000;
+
 export function remoteAgents() {
   const out = [];
   const seen = new Set();
@@ -122,7 +124,12 @@ export function remoteAgents() {
         const address = `${row.alias}@${m.label}`;
         if (seen.has(address)) continue;
         seen.add(address);
-        const status = row.vendor === "project" ? "directory" : row.live === false ? "ended" : "live";
+        // The routing data is the answer of the other gateway at that time, and
+        // not its state now. Data older than STALE_MS says "stale", because
+        // that gateway can be offline now.
+        const age = Date.now() - Date.parse(m.routing.at);
+        const status =
+          row.vendor === "project" ? "directory" : row.live === false ? "ended" : age > STALE_MS ? "stale" : "live";
         out.push({ address, owner: m.label, project: entry.label ?? entry.id, status, at: m.routing.at });
       }
     }

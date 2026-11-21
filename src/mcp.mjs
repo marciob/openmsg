@@ -57,7 +57,8 @@ function instructions(name) {
     "Tools: read_inbox reads the new messages, list_agents gives the addresses that you can write to, " +
     "send_message writes to one address. " +
     "Nothing wakes you: a new message waits until you call read_inbox. " +
-    "To answer a message, give its Id as reply_to."
+    "To answer a message, give its Id as reply_to. " +
+    `An agent with a shell, such as Claude Code, uses the openmsg command and not these tools: here it writes as mcp:${name}.`
   );
 }
 

@@ -189,9 +189,12 @@ async function cmdList(args = []) {
 // The routing data can be old: the other gateway answered at that time.
 function printRemote(others) {
   if (others.length === 0) return;
-  console.log("\nagents of other people (routing data as of the time shown):");
+  console.log("\nagents of other people, from the last answer of their gateway:");
   const width = Math.max(...others.map((r) => r.address.length));
-  for (const r of others) console.log(`${r.address.padEnd(width)}  ${r.status.padEnd(9)}  as of ${r.at}`);
+  for (const r of others) console.log(`${r.address.padEnd(width)}  ${r.status.padEnd(9)}  as of ${ago(Date.parse(r.at))} ago`);
+  if (others.some((r) => r.status === "stale")) {
+    console.log("stale: the answer is older than 10 minutes, and that gateway can be offline now. A send tells.");
+  }
 }
 
 async function cmdNote(args) {

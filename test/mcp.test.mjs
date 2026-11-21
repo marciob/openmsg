@@ -202,11 +202,21 @@ test("openmsg list shows the agents of other people, so an agent with a shell ne
   const env = { ...process.env, OPENMSG_HOME: HOME };
   const plain = spawnSync("node", [cli, "list"], { env, encoding: "utf8" });
   assert.match(plain.stdout, /agents of other people/);
-  assert.equal(plain.stdout.match(/cursor:reviewer@alice +live +as of /g)?.length, 1);
+  assert.equal(plain.stdout.match(/cursor:reviewer@alice +live +as of \d+s ago/g)?.length, 1);
   const rows = JSON.parse(spawnSync("node", [cli, "list", "--json"], { env, encoding: "utf8" }).stdout);
   const far = rows.filter((r) => r.remote);
   assert.deepEqual(far.map((r) => r.address), ["cursor:reviewer@alice"]);
   assert.equal(far[0].owner, "alice");
+
+  // Old routing data does not say live: that gateway can be offline now.
+  const data = JSON.parse(fs.readFileSync(path.join(HOME, "directory.json"), "utf8"));
+  for (const p of Object.values(data.projects)) {
+    for (const m of Object.values(p.members)) if (m.routing) m.routing.at = new Date(Date.now() - 3_600_000).toISOString();
+  }
+  fs.writeFileSync(path.join(HOME, "directory.json"), JSON.stringify(data));
+  const old = spawnSync("node", [cli, "list"], { env, encoding: "utf8" }).stdout;
+  assert.match(old, /cursor:reviewer@alice +stale +as of 1h ago/);
+  assert.match(old, /can be offline now/);
 });
 
 test("the server reads one JSON object on each line, and a broken line gets a parse error", async () => {
