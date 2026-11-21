@@ -8,6 +8,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-ma-"));
 const ALICE = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-mb-"));
@@ -193,6 +195,18 @@ test("a message from another person waits in the mailbox, and the read acknowled
   assert.equal(gateway.uniqueRows([row, { ...row }, { ...row, session: "ses_other" }]).length, 2);
   directory.setRouting(PROJECT, alice.ownerId, [row, { ...row }]);
   assert.equal(said(await call(chatgpt, "list_agents")).match(/cursor:reviewer@alice/g).length, 1);
+});
+
+test("openmsg list shows the agents of other people, so an agent with a shell needs no connector", () => {
+  const cli = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
+  const env = { ...process.env, OPENMSG_HOME: HOME };
+  const plain = spawnSync("node", [cli, "list"], { env, encoding: "utf8" });
+  assert.match(plain.stdout, /agents of other people/);
+  assert.equal(plain.stdout.match(/cursor:reviewer@alice +live +as of /g)?.length, 1);
+  const rows = JSON.parse(spawnSync("node", [cli, "list", "--json"], { env, encoding: "utf8" }).stdout);
+  const far = rows.filter((r) => r.remote);
+  assert.deepEqual(far.map((r) => r.address), ["cursor:reviewer@alice"]);
+  assert.equal(far[0].owner, "alice");
 });
 
 test("the server reads one JSON object on each line, and a broken line gets a parse error", async () => {

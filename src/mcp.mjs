@@ -123,19 +123,13 @@ export function createServer({ name, run = runCli } = {}) {
     const rows = [];
     for (const a of local) {
       const address = `${a.vendor}:${a.name}`;
-      if (a.you || !mcpagents.allows(me.allow, address)) continue;
+      if (a.remote || a.you || !mcpagents.allows(me.allow, address)) continue;
       rows.push(`${address}  ${a.status ?? "unknown"}  ${a.note ?? a.title ?? ""}`.trimEnd());
     }
     // The agents of other people, from the last answer that this machine holds.
-    for (const project of directory.projects()) {
-      for (const member of Object.values(project.members ?? {})) {
-        for (const row of member.routing?.rows ?? []) {
-          const address = `${row.alias}@${member.label}`;
-          if (!mcpagents.allows(me.allow, address) || rows.some((r) => r.startsWith(`${address}  `))) continue;
-          const state = row.vendor === "project" ? "directory" : row.live === false ? "ended" : "live";
-          rows.push(`${address}  ${state}  as of ${member.routing.at}`);
-        }
-      }
+    for (const r of directory.remoteAgents()) {
+      if (!mcpagents.allows(me.allow, r.address) || rows.some((x) => x.startsWith(`${r.address}  `))) continue;
+      rows.push(`${r.address}  ${r.status}  as of ${r.at}`);
     }
     if (rows.length === 0) {
       return text("No agent that you can write to. The owner gives the addresses with: openmsg mcp add " + name + " --allow <address>");

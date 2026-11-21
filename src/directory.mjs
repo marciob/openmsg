@@ -111,6 +111,25 @@ export function routingOf(projectId, ownerId) {
   return project(projectId)?.members?.[ownerId]?.routing ?? null;
 }
 
+// The agents of other people, from the last routing data that this machine
+// holds. A revoked member gives no row, and one address gives one row.
+export function remoteAgents() {
+  const out = [];
+  const seen = new Set();
+  for (const entry of projects()) {
+    for (const m of members(entry.id)) {
+      for (const row of m.routing?.rows ?? []) {
+        const address = `${row.alias}@${m.label}`;
+        if (seen.has(address)) continue;
+        seen.add(address);
+        const status = row.vendor === "project" ? "directory" : row.live === false ? "ended" : "live";
+        out.push({ address, owner: m.label, project: entry.label ?? entry.id, status, at: m.routing.at });
+      }
+    }
+  }
+  return out;
+}
+
 // A machine of a member, and not the member. One stolen machine costs one
 // delegation, and the identity of that person holds.
 export function revokeDevice(projectId, deviceId, reason = null, { owner = null } = {}) {

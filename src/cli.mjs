@@ -156,12 +156,18 @@ async function cmdList(args = []) {
   ]);
   const agents = args.includes("--all") ? all : all.filter((a) => !a.background);
   const hidden = all.length - agents.length;
-  if (agents.length === 0) {
-    console.log(hidden ? `no running agents found. ${hidden} background sessions: openmsg list --all` : "no running agents found");
+  // The agents of other people, from the last routing data on this machine.
+  // An agent with a shell finds them here, and needs no MCP connector.
+  const others = directory.remoteAgents();
+  if (args.includes("--json")) {
+    const local = agents.map(({ transport, ...a }) => ({ ...a, you: sameSession(a, me) }));
+    const far = others.map((r) => ({ ...r, remote: true, you: false }));
+    console.log(JSON.stringify([...local, ...far], null, 1));
     return;
   }
-  if (args.includes("--json")) {
-    console.log(JSON.stringify(agents.map(({ transport, ...a }) => ({ ...a, you: sameSession(a, me) })), null, 1));
+  if (agents.length === 0) {
+    console.log(hidden ? `no running agents found. ${hidden} background sessions: openmsg list --all` : "no running agents found");
+    printRemote(others);
     return;
   }
   const width = Math.max(...agents.map((a) => address(a).length));
@@ -177,6 +183,15 @@ async function cmdList(args = []) {
     console.log(`  ${[about, tilde(a.cwd)].filter(Boolean).join(" · ")}`);
   }
   if (hidden) console.log(`\n${hidden} background sessions not shown. See them: openmsg list --all`);
+  printRemote(others);
+}
+
+// The routing data can be old: the other gateway answered at that time.
+function printRemote(others) {
+  if (others.length === 0) return;
+  console.log("\nagents of other people (routing data as of the time shown):");
+  const width = Math.max(...others.map((r) => r.address.length));
+  for (const r of others) console.log(`${r.address.padEnd(width)}  ${r.status.padEnd(9)}  as of ${r.at}`);
 }
 
 async function cmdNote(args) {
