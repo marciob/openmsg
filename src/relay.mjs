@@ -111,6 +111,22 @@ export function keepReceipt(owner, receipt) {
   fs.writeFileSync(path.join(folder, `${safeName(receipt.messageId)}.json`), JSON.stringify(row));
 }
 
+// The machine that holds the message took the receipt, so the relay forgets
+// it. A newer state that arrived in the meantime has another status, and it
+// stays for the next connection. Rule 17 of section 4 of the spec of 0.2.
+export function takeReceipt(owner, messageId, status) {
+  const file = path.join(dir("receipts", safeName(owner)), `${safeName(messageId)}.json`);
+  let row;
+  try {
+    row = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+  if (row.status !== status) return false;
+  fs.rmSync(file, { force: true });
+  return true;
+}
+
 export function receipts(owner, { now = Date.now() } = {}) {
   const folder = dir("receipts", safeName(owner));
   let files = [];
@@ -235,6 +251,10 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
   // to every machine of that owner. The machine that holds the session takes
   // it and answers, and the others stay quiet.
   const owners = new Map();
+  // Every open WebSocket. The HTTP server does not track a connection after
+  // the upgrade, so server.close() waits for these for ever. A stop of the
+  // service then waited until systemd killed the relay.
+  const sockets = new Set();
 
   server.on("upgrade", (request, socket) => {
     if (!accepts(request)) {
@@ -242,6 +262,8 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
       return;
     }
     const connection = handshake(socket, request);
+    sockets.add(connection);
+    connection.on("close", () => sockets.delete(connection));
     let owner = null;
     let machine = null;
 
@@ -292,6 +314,8 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
         // A receipt goes to every machine that connects, because the relay
         // does not know which machine sent the message. A machine that takes
         // one twice writes the same state twice, and that changes nothing.
+        // The machine that holds the message answers with receipt-taken, and
+        // the relay forgets the receipt.
         for (const row of receipts(owner)) {
           answer({ type: "receipt", messageId: row.messageId, status: row.status, reason: row.reason });
         }
@@ -316,7 +340,21 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
     port: real,
     url: `${secure ? "wss" : "ws"}://${host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host}:${real}`,
     owners,
-    close: () => new Promise((done) => server.close(done)),
+    close: () =>
+      new Promise((done) => {
+        server.close(() => done());
+        // A close frame tells each gateway to connect again. A proxy in
+        // front, such as Tailscale Funnel, can keep its side open, so the
+        // relay ends every socket after a short wait. The HTTP server also
+        // keeps idle keep-alive connections, and they go too.
+        const all = [...sockets];
+        for (const connection of all) connection.close();
+        server.closeIdleConnections?.();
+        setTimeout(() => {
+          for (const connection of all) connection.drop();
+          server.closeAllConnections?.();
+        }, 300).unref();
+      }),
   };
 }
 
@@ -435,6 +473,13 @@ function handle(frame, owner, answer, owners, log) {
       return;
     }
     answer({ type: "dir-records", id: frame.id, project: frame.project, records: records(frame.project) });
+    return;
+  }
+
+  if (frame.type === "receipt-taken") {
+    if (typeof frame.messageId === "string" && takeReceipt(owner, frame.messageId, frame.status)) {
+      log(`${owner} took the receipt of ${frame.messageId}: ${frame.status}`);
+    }
     return;
   }
 

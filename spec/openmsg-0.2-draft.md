@@ -125,7 +125,7 @@ Rules:
    delegation with it, and the relay verifies that chain against the owner
    keys in the same frame.
 7. The frames are `hello`, `welcome`, `send`, `stored`, `refused`, `deliver`,
-   `ack`, `receipt`, `routing-request`, and `routing-answer`. A request for
+   `ack`, `receipt`, `receipt-taken`, `routing-request`, and `routing-answer`. A request for
    routing data and its answer both carry a signature of an owner, so the
    relay forwards them and cannot make one.
 8. The relay stores a message for a receiver that is offline. It answers
@@ -162,8 +162,14 @@ Rules:
     for that machine.
 16. A receipt goes to every machine of the owner that sent, because the relay
     does not know which machine sent. A receipt for an owner that is offline
-    waits until it is old, and every machine that connects reads it. A
-    machine that reads one twice writes the same state twice.
+    waits at the relay, and every machine that connects reads it. A machine
+    that reads one twice writes the same state twice.
+17. The machine that holds the message in its outbox answers a receipt with
+    `receipt-taken`. That frame carries the message id and the state. The
+    relay then forgets that receipt, but only if it still holds that state.
+    A newer state that arrived in the meantime stays for the next
+    connection. A machine with no copy of the message sends nothing. A
+    receipt that no machine takes waits until it is old.
 
 ## 5. Authentication of a message
 

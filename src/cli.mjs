@@ -876,6 +876,11 @@ async function cmdSendRemote(target, text, replyTo, args) {
   if (row.live === false && row.vendor !== "project") {
     console.error(`openmsg: the session ${row.alias}@${label} does not run now. The next session in its directory takes the message.`);
   }
+  // An earlier message to this agent that nobody read. A second message does
+  // not help a busy agent, and it costs one more run of an agent that pays.
+  for (const quiet of outbox.silent({ alias: `${alias}@${label}` })) {
+    console.error(`openmsg: ${outbox.silenceNote(quiet)}`);
+  }
   // The message is sealed for the machine that holds that session, and the
   // routing data of that machine gave this key.
   const sealTo = row.sealTo ?? null;
@@ -939,7 +944,7 @@ async function cmdSendRemote(target, text, replyTo, args) {
     const receipt = await waitForReceipt(receipts, message.messageId, 3000);
     link.close();
     if (receipt) {
-      outbox.setState(message.messageId, receipt.status, { reason: receipt.reason ?? null });
+      outbox.advance(message.messageId, receipt.status, { reason: receipt.reason ?? null });
       out = { status: receipt.status, reason: receipt.reason };
     } else {
       out = { status: "relay-holds" };
@@ -1108,13 +1113,19 @@ async function cmdRelay(args) {
 
 function cmdOutbox(args) {
   const rows = args.includes("--all") ? outbox.list() : outbox.waiting();
-  if (rows.length === 0) {
+  const quiet = outbox.silent();
+  if (rows.length === 0 && quiet.length === 0) {
     console.log(args.includes("--all") ? "the outbox is empty" : "no message waits for a receipt");
     return;
   }
   for (const r of rows) {
     const where = r.pending ? "  (on this machine, the relay did not answer)" : "";
     console.log(`${r.messageId.slice(0, 8)}  ${String(r.state).padEnd(16)} to ${r.alias ?? r.to}  ${r.at}${where}`);
+  }
+  if (quiet.length > 0) {
+    if (rows.length > 0) console.log("");
+    console.log("no answer:");
+    for (const r of quiet) console.log(`  ${outbox.silenceNote(r)}`);
   }
 }
 

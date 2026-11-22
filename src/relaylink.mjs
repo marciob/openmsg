@@ -79,6 +79,7 @@ export async function open(url, handlers = {}) {
     send,
     routing,
     ack,
+    takeReceipt,
     publishRecord,
     fetchDirectory,
     close: () => {
@@ -217,6 +218,12 @@ export async function open(url, handlers = {}) {
 
   function ack(messageId, to, status, reason = null) {
     connection.send(JSON.stringify({ type: "ack", messageId, to, status, reason }));
+  }
+
+  // This machine holds the message, and it wrote the state of the receipt.
+  // The relay can forget that receipt.
+  function takeReceipt(messageId, status) {
+    connection.send(JSON.stringify({ type: "receipt-taken", messageId, status }));
   }
 }
 

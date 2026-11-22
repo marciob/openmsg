@@ -245,6 +245,23 @@ test("a receipt for a sender that was offline waits at the relay", async () => {
     relay.receipts(alice.ownerId).some((r) => r.messageId === sent.messageId),
     "another machine of Alice can still read it",
   );
+  // The machine that holds the message takes the receipt. A frame with
+  // another state changes nothing: a newer state can wait there.
+  const taker = await asAsync(ALICE, () => relaylink.open(RELAY_URL));
+  taker.takeReceipt(sent.messageId, "replied");
+  await sleep(200);
+  assert.ok(
+    relay.receipts(alice.ownerId).some((r) => r.messageId === sent.messageId),
+    "a receipt-taken for another state leaves the receipt",
+  );
+  taker.takeReceipt(sent.messageId, "adapter-accepted");
+  await sleep(200);
+  assert.ok(
+    !relay.receipts(alice.ownerId).some((r) => r.messageId === sent.messageId),
+    "the relay forgets the receipt that the machine took",
+  );
+  taker.close();
+  relay.keepReceipt(alice.ownerId, { messageId: sent.messageId, status: "adapter-accepted" });
   assert.equal(
     relay.receipts(alice.ownerId, { now: Date.now() + relay.LIMITS.ageMs + 1000 }).length,
     0,
@@ -315,4 +332,13 @@ test("the relay drops a message that passed its deadline", async () => {
   });
   assert.equal(answer.type, "refused");
   assert.equal(answer.reason, "expired");
+});
+
+test("a relay with an open connection stops at once", async () => {
+  const second = await relay.serve({ port: 0, host: "127.0.0.1", log: () => {} });
+  const connection = await wsframe.connect(second.url);
+  const closed = new Promise((resolve) => connection.on("close", resolve));
+  const result = await Promise.race([second.close().then(() => "stopped"), sleep(2000).then(() => "hung")]);
+  assert.equal(result, "stopped", "close() does not wait for the WebSocket");
+  await closed;
 });

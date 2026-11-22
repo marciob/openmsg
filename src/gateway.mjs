@@ -576,7 +576,7 @@ function handleReceipt(body) {
   const row = outbox.find(body.messageId);
   if (!row) return { code: 404, body: { error: "no such message in the outbox" } };
   if (row.to !== member.ownerId) return { code: 403, body: { error: "that message went to another owner" } };
-  outbox.setState(body.messageId, body.status, { reason: body.reason ?? null });
+  outbox.advance(body.messageId, body.status, { reason: body.reason ?? null });
   return { code: 200, body: { ok: true } };
 }
 
@@ -796,9 +796,13 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal, f
       // without it the message waits at the relay for ever.
       link.ack(wire.messageId, from, out.status, out.reason ?? null);
     },
-    onReceipt: ({ messageId, status, reason }) => {
-      outbox.setState(messageId, status, { reason });
-      log(`receipt ${messageId}: ${status}${reason ? ` (${reason})` : ""}`);
+    onReceipt: ({ messageId, status, reason }, link) => {
+      // A receipt for a message that this machine did not send changes
+      // nothing here, and it stays at the relay for the machine that sent it.
+      const row = outbox.advance(messageId, status, { reason });
+      if (!row) return;
+      if (row.written) log(`receipt ${messageId}: ${status}${reason ? ` (${reason})` : ""}`);
+      link?.takeReceipt?.(messageId, status);
     },
     onRoutingRequest: async (frame, link) => {
       const answer = await handleRouting(frame.request ?? {});
