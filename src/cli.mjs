@@ -48,6 +48,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg clear project:<dir> --key <k>   remove the waiting message with that key
   openmsg waiting                   the project messages that wait for a session
   openmsg inbox [--json] [--all]    show the messages for this agent
+     [--wait <seconds>]             wait in this turn for a message, with no notice
   openmsg whoami                    show how this agent is addressed
   openmsg webhook add <name> <url>  name an agent that wakes on an HTTP request
      [--header "Name: value"]       a header that the webhook asks for, such as a key
@@ -124,6 +125,7 @@ For the agents of another person, on another machine:
   openmsg device revoke <id>        tell the team that a machine of yours is gone
   openmsg relay start [--port <n>] [--cert <file>] [--key <file>]
   openmsg relay use <url> [--ca <file>]   send through that relay
+  openmsg relay wake <name> | --off      the relay wakes webhook:<name> when its machine stops
   openmsg outbox [--all]            the messages that wait for a receipt
 
 A message to another person goes to "claude:api-worker@alice".
@@ -364,6 +366,14 @@ function cmdWaiting() {
 
 async function cmdInbox(args) {
   const me = await self();
+  // A wait for a message in this turn, up to that number of seconds. A
+  // message that arrives in the wait goes to the mailbox with no notice.
+  const waitFor = flag(args, "wait");
+  if (waitFor !== undefined && waitFor !== null) {
+    const seconds = Number(waitFor);
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 600) throw new Error("--wait takes a number of seconds, from 1 to 600");
+    await waitForMail(me, seconds * 1000);
+  }
   const all = mailbox.list(me, { unreadOnly: !args.includes("--all") });
   // The sender refuses a long chain, but a sender that does not follow this
   // spec can still write to the mailbox. The reader refuses it again.
@@ -398,6 +408,25 @@ async function cmdInbox(args) {
   }
   mailbox.markRead(me, rows.map((r) => r.messageId));
   await acknowledgeRead(rows);
+}
+
+async function waitForMail(me, ms) {
+  const end = Date.now() + ms;
+  if (mailbox.list(me, { unreadOnly: true }).length > 0) return;
+  mailbox.markWaiting(me, end);
+  const stop = () => mailbox.clearWaiting(me);
+  process.once("SIGINT", () => {
+    stop();
+    process.exit(130);
+  });
+  try {
+    while (Date.now() < end) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (mailbox.list(me, { unreadOnly: true }).length > 0) return;
+    }
+  } finally {
+    stop();
+  }
 }
 
 // A read of the mailbox is an event from the agent, and rule 1 of section 8
@@ -1103,12 +1132,40 @@ async function cmdRelay(args) {
     }
     return;
   }
+  if (sub === "wake") {
+    const url = gateway.settings().relay;
+    if (!url) throw new Error("no relay. Run: openmsg relay use <url>");
+    const off = rest.includes("--off");
+    const [name] = rest.filter((a) => !a.startsWith("--"));
+    let wake = null;
+    if (!off) {
+      if (!name) throw new Error("usage: openmsg relay wake <name> | relay wake --off");
+      const agent = webhooks.agents().find((a) => a.name === name);
+      if (!agent) throw new Error(`no agent webhook:${name}. Run: openmsg webhook add ${name} <url>`);
+      wake = { url: agent.transport.url, headers: agent.transport.headers ?? {}, agent: `webhook:${name}` };
+    }
+    const link = await relaylink.open(url);
+    try {
+      const answer = off ? await link.clearWake() : await link.setWake(wake);
+      if (answer.type === "wake-refused") throw new Error(`the relay refused the wake address: ${answer.reason}`);
+      if (answer.type === "refused") throw new Error(`the relay did not answer: ${answer.reason}`);
+      console.log(
+        off
+          ? "the relay wakes no agent of this owner"
+          : `the relay wakes webhook:${name} when a message waits 15 seconds with no machine to take it. ` +
+              "The relay now holds the address of that webhook.",
+      );
+    } finally {
+      link.close();
+    }
+    return;
+  }
   if (sub === undefined || sub === "show") {
     const url = gateway.settings().relay;
     console.log(url ? `relay ${url}` : "no relay. Run: openmsg relay use <url>");
     return;
   }
-  throw new Error("usage: openmsg relay start [--cert <f> --key <f>] | relay use <url> [--ca <f>] | relay show");
+  throw new Error("usage: openmsg relay start [--cert <f> --key <f>] | relay use <url> [--ca <f>] | relay wake <name> | relay show");
 }
 
 function cmdOutbox(args) {

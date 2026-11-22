@@ -80,6 +80,8 @@ export async function open(url, handlers = {}) {
     routing,
     ack,
     takeReceipt,
+    setWake,
+    clearWake,
     publishRecord,
     fetchDirectory,
     close: () => {
@@ -99,6 +101,7 @@ export async function open(url, handlers = {}) {
       if (fire(`dir:${frame.project}:${frame.kind}`, frame)) return;
     }
     if (frame.type === "dir-records" && fire(`fetch:${frame.id}`, frame)) return;
+    if (["wake-stored", "wake-refused", "wake-cleared"].includes(frame.type) && fire("wake", frame)) return;
     if ((frame.type === "stored" || frame.type === "refused") && fire(`send:${frame.messageId}`, frame)) return;
     if (frame.type === "routing-answer" && fire(`routing:${frame.id}`, frame)) return;
     // The link goes to the handler. A frame can arrive before open() gives
@@ -218,6 +221,20 @@ export async function open(url, handlers = {}) {
 
   function ack(messageId, to, status, reason = null) {
     connection.send(JSON.stringify({ type: "ack", messageId, to, status, reason }));
+  }
+
+  // The wake address of this owner, for an agent whose machine stops between
+  // its turns. Rule 18 of section 4 of the spec of 0.2.
+  async function setWake(wake) {
+    const answer = expect("wake", ANSWER_TIMEOUT_MS);
+    connection.send(JSON.stringify({ type: "wake-set", wake }));
+    return answer;
+  }
+
+  async function clearWake() {
+    const answer = expect("wake", ANSWER_TIMEOUT_MS);
+    connection.send(JSON.stringify({ type: "wake-clear" }));
+    return answer;
   }
 
   // This machine holds the message, and it wrote the state of the receipt.

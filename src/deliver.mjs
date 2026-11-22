@@ -53,6 +53,9 @@ function keep(agent, message, rendered) {
 async function wake(agent, message, rendered) {
   // The agent gets a new notice for a message that arrives a second time.
   keep(agent, message, rendered);
+  // The agent waits for a message in this turn, so it reads this one now.
+  // A notice would start a second turn, and the agent can pay for each one.
+  if (mailbox.isWaiting(agent)) return { delivered: true, transport: "mailbox-read-waits", stored: true };
   try {
     return { ...(await webhook.deliver(agent, message)), stored: true };
   } catch (e) {

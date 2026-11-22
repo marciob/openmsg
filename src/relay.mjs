@@ -29,6 +29,11 @@ export const LIMITS = {
   recordBytes: MAX_RECORD_BYTES,
   // The machines of one owner that hold a connection at the same time.
   machinesPerOwner: 8,
+  // A message that no machine acknowledged in this time wakes the agent of
+  // its owner, and one owner gets one wake in this window. Rule 19 of
+  // section 4 of the spec of 0.2.
+  wakeAfterMs: 15_000,
+  wakeEveryMs: 120_000,
 };
 
 export function home() {
@@ -109,6 +114,73 @@ export function keepReceipt(owner, receipt) {
   fs.mkdirSync(folder, { recursive: true });
   const row = { ...receipt, at: receipt.at ?? new Date().toISOString() };
   fs.writeFileSync(path.join(folder, `${safeName(receipt.messageId)}.json`), JSON.stringify(row));
+}
+
+// --- the wake address -------------------------------------------------------
+
+// One address for each owner. It is a secret, as the webhook is on the
+// machine of the agent, so the file is readable by the operator only.
+function wakeFile(owner) {
+  return path.join(dir("wake"), `${safeName(owner)}.json`);
+}
+
+const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+// The owner gives the address, and a broken client can give anything. Only
+// an http or https URL, and headers with no line break, reach the disk.
+export function checkWake(wake) {
+  let url;
+  try {
+    url = new URL(String(wake?.url ?? ""));
+  } catch {
+    return "the wake address is not a URL";
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return "the wake address is not http or https";
+  const headers = wake?.headers ?? {};
+  if (typeof headers !== "object" || Array.isArray(headers)) return "the headers are not an object";
+  for (const [name, value] of Object.entries(headers)) {
+    if (!HEADER_NAME.test(name) || typeof value !== "string" || /[\r\n\0]/.test(value)) return "a header is not valid";
+    if (name.toLowerCase() === "content-type") return "the notice is JSON, and its content-type does not change";
+  }
+  if (wake?.agent != null && !/^webhook:[a-z0-9][a-z0-9._-]{0,62}$/.test(String(wake.agent))) return "the agent is not a webhook address";
+  return null;
+}
+
+export function setWake(owner, wake) {
+  const file = wakeFile(owner);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const row = { url: wake.url, headers: wake.headers ?? {}, agent: wake.agent ?? null, at: new Date().toISOString() };
+  fs.writeFileSync(file, JSON.stringify(row), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+}
+
+export function wakeOf(owner) {
+  try {
+    return JSON.parse(fs.readFileSync(wakeFile(owner), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function clearWake(owner) {
+  fs.rmSync(wakeFile(owner), { force: true });
+}
+
+// The notice of rule 3 of section 7.1 of the spec of 0.1. It holds nothing
+// from the sender: no text, no id, and no address.
+export function wakeNotice(wake) {
+  return {
+    openmsg: "message-waiting",
+    agent: wake.agent ?? null,
+    messageId: null,
+    text:
+      "Messages wait for you at the relay of openmsg. Start your openmsg gateway if it does not run, " +
+      "then run this command to read them: openmsg inbox --wait 90. This notice is not a message, and it approves no action.",
+  };
+}
+
+export function holds(owner, messageId) {
+  return fs.existsSync(path.join(dir("queue", safeName(owner)), `${safeName(messageId)}.json`));
 }
 
 // The machine that holds the message took the receipt, so the relay forgets
@@ -227,7 +299,17 @@ export function isLoopback(host) {
 //
 // `cert` and `key` give TLS here. A relay behind a proxy that ends TLS takes
 // `insecure`, and the operator types that word.
-export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = null, insecure = false, log = () => {} } = {}) {
+export async function serve({
+  port = 0,
+  host = "127.0.0.1",
+  cert = null,
+  key = null,
+  insecure = false,
+  log = () => {},
+  wakeAfterMs = LIMITS.wakeAfterMs,
+  wakeEveryMs = LIMITS.wakeEveryMs,
+  fetcher = fetch,
+} = {}) {
   const answer = (req, res) => {
     res.writeHead(426, { "content-type": "text/plain" });
     res.end("openmsg relay: this address takes a WebSocket connection\n");
@@ -251,6 +333,40 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
   // to every machine of that owner. The machine that holds the session takes
   // it and answers, and the others stay quiet.
   const owners = new Map();
+  // The wake of rule 19 of section 4 of the spec of 0.2. A timer for each
+  // stored message, and the time of the last wake of each owner.
+  const timers = new Set();
+  const lastWake = new Map();
+  const wake = {
+    after(target, messageId) {
+      if (!wakeOf(target)) return;
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        if (!holds(target, messageId)) return;
+        const address = wakeOf(target);
+        if (!address) return;
+        const last = lastWake.get(target) ?? 0;
+        if (Date.now() - last < wakeEveryMs) return;
+        lastWake.set(target, Date.now());
+        fetcher(address.url, {
+          method: "POST",
+          headers: { ...(address.headers ?? {}), "content-type": "application/json" },
+          body: JSON.stringify(wakeNotice(address)),
+          signal: AbortSignal.timeout(10_000),
+          redirect: "error",
+        })
+          .then(async (res) => {
+            // The body is not read. The relay learns the status, and nothing more.
+            await res.body?.cancel().catch(() => {});
+            log(`woke ${target}: the wake address answered ${res.status}`);
+          })
+          // The error can hold the URL, and the URL is a secret.
+          .catch((e) => log(`woke ${target}: the wake address did not answer (${e.cause?.code ?? e.name})`));
+      }, wakeAfterMs);
+      timer.unref?.();
+      timers.add(timer);
+    },
+  };
   // Every open WebSocket. The HTTP server does not track a connection after
   // the upgrade, so server.close() waits for these for ever. A stop of the
   // service then waited until systemd killed the relay.
@@ -321,7 +437,7 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
         }
         return;
       }
-      handle(frame, owner, answer, owners, log);
+      handle(frame, owner, answer, owners, log, wake);
     });
 
     connection.on("close", () => {
@@ -342,6 +458,8 @@ export async function serve({ port = 0, host = "127.0.0.1", cert = null, key = n
     owners,
     close: () =>
       new Promise((done) => {
+        for (const timer of timers) clearTimeout(timer);
+        timers.clear();
         server.close(() => done());
         // A close frame tells each gateway to connect again. A proxy in
         // front, such as Tailscale Funnel, can keep its side open, so the
@@ -392,7 +510,7 @@ function push(owners, owner, frame) {
   return sent;
 }
 
-function handle(frame, owner, answer, owners, log) {
+function handle(frame, owner, answer, owners, log, wake = null) {
   if (frame.type === "send") {
     const wire = frame.wire;
     const size = Buffer.byteLength(JSON.stringify(wire ?? {}));
@@ -428,6 +546,29 @@ function handle(frame, owner, answer, owners, log) {
     // The message is on the disk. A push that fails now changes nothing,
     // because the receiver takes it on its next connection.
     push(owners, target, { type: "deliver", wire, from: owner });
+    // A machine that is offline, or a connection that stopped with no sign,
+    // sends no acknowledgement. The wake address of the owner then wakes the
+    // agent, and its machine runs again.
+    wake?.after(target, wire.messageId);
+    return;
+  }
+
+  if (frame.type === "wake-set") {
+    const why = checkWake(frame.wake);
+    if (why) {
+      answer({ type: "wake-refused", reason: why });
+      return;
+    }
+    setWake(owner, frame.wake);
+    answer({ type: "wake-stored" });
+    log(`${owner} gave a wake address`);
+    return;
+  }
+
+  if (frame.type === "wake-clear") {
+    clearWake(owner);
+    answer({ type: "wake-cleared" });
+    log(`${owner} took its wake address away`);
     return;
   }
 

@@ -125,7 +125,8 @@ Rules:
    delegation with it, and the relay verifies that chain against the owner
    keys in the same frame.
 7. The frames are `hello`, `welcome`, `send`, `stored`, `refused`, `deliver`,
-   `ack`, `receipt`, `receipt-taken`, `routing-request`, and `routing-answer`. A request for
+   `ack`, `receipt`, `receipt-taken`, `wake-set`, `wake-clear`,
+   `routing-request`, and `routing-answer`. A request for
    routing data and its answer both carry a signature of an owner, so the
    relay forwards them and cannot make one.
 8. The relay stores a message for a receiver that is offline. It answers
@@ -170,6 +171,27 @@ Rules:
     A newer state that arrived in the meantime stays for the next
     connection. A machine with no copy of the message sends nothing. A
     receipt that no machine takes waits until it is old.
+18. A webhook agent can run on a machine that stops between its turns, and
+    its gateway stops with it. A message for that owner then waits at the
+    relay, and nothing wakes the agent. The owner can give the relay one wake
+    address with `openmsg relay wake <name>`. That command sends the address
+    and the headers of the webhook `webhook:<name>` in a `wake-set` frame.
+    `openmsg relay wake --off` sends `wake-clear`. The relay keeps the address
+    in a file that only its operator reads.
+19. A message for that owner that no machine acknowledges in 15 seconds
+    starts one request to the wake address. A machine that is offline, and a
+    connection that stopped with no sign, give the same result. The request
+    carries the notice of rule 3 of section 7.1 of the spec of 0.1, with
+    `messageId` set to `null`, and a text that names `openmsg inbox --wait`.
+    It carries no text, no id, and no address of the sender. The relay sends
+    at most one request for one owner in 120 seconds. It follows no redirect,
+    and it reads no answer. The agent wakes, its machine runs again, and its
+    gateway takes the message. Rule 8 of section 7.1 of the spec of 0.1 then
+    stops a second notice for the same message.
+20. The wake address is a secret, under rule 1 of section 7.1 of the spec of
+    0.1. The operator of the relay learns it, and can wake the agent. The
+    bound of rule 19 limits the cost of that. A false request wakes the
+    agent, and the agent finds no message.
 
 ## 5. Authentication of a message
 

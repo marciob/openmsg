@@ -78,3 +78,45 @@ export function find(agent, messageId) {
   if (matches.length > 1) throw new Error(`"${messageId}" names ${matches.length} messages. Use more characters.`);
   return matches[0] ?? null;
 }
+
+// An agent that waits for a message in this turn. `openmsg inbox --wait`
+// writes this file, and the adapter of a webhook agent then sends no notice:
+// the agent reads the message in this turn, and a notice would start a
+// second turn. Rule 8 of section 7.1 of the spec of 0.1.
+function waitPath(agent) {
+  return path.join(root(), "waiting", `${encodeName(address(agent))}.json`);
+}
+
+export function markWaiting(agent, untilMs, pid = process.pid) {
+  const file = waitPath(agent);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ pid, until: new Date(untilMs).toISOString() }));
+}
+
+export function clearWaiting(agent, pid = process.pid) {
+  const file = waitPath(agent);
+  try {
+    // Another wait of the same agent can own the file now.
+    if (JSON.parse(fs.readFileSync(file, "utf8")).pid !== pid) return;
+  } catch {
+    return;
+  }
+  fs.rmSync(file, { force: true });
+}
+
+export function isWaiting(agent, { now = Date.now() } = {}) {
+  let row;
+  try {
+    row = JSON.parse(fs.readFileSync(waitPath(agent), "utf8"));
+  } catch {
+    return false;
+  }
+  if (!(Date.parse(row.until) > now)) return false;
+  try {
+    process.kill(row.pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM: the process runs under another user, and it runs.
+    return e.code === "EPERM";
+  }
+}

@@ -296,6 +296,16 @@ Rules:
 6. The implementation must not follow a redirect, and it must not give the
    answer of the webhook to a model.
 7. The agent names itself with `OPENMSG_SELF=webhook:<name>`.
+8. An agent that expects a message runs `openmsg inbox --wait <seconds>`.
+   While it waits, a file in the home of openmsg says so, with the process id
+   of the command and the end of the wait. The adapter then writes the
+   message to the mailbox, and it sends no notice, because the agent reads
+   the message in that turn. A notice would start a second turn, and an agent
+   that runs on credits pays for each turn. A file whose process stopped, or
+   whose end passed, does not count.
+9. The machine of such an agent can stop between its turns, and its gateway
+   then stops too. The relay of a team can then wake the agent. Rules 18 to
+   20 of section 4 of the spec of 0.2 hold the rules.
 
 ### 7.2 An agent that reads through MCP
 

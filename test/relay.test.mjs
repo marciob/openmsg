@@ -342,3 +342,71 @@ test("a relay with an open connection stops at once", async () => {
   assert.equal(result, "stopped", "close() does not wait for the WebSocket");
   await closed;
 });
+
+test("a message that no machine takes wakes the agent of its owner, one time in the window", async () => {
+  // A store of its own, so the messages of the tests above do not count.
+  const before = process.env.OPENMSG_RELAY_HOME;
+  process.env.OPENMSG_RELAY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "openmsg-wake-relay-"));
+  const calls = [];
+  const fetcher = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  };
+  const second = await relay.serve({ port: 0, host: "127.0.0.1", wakeAfterMs: 150, wakeEveryMs: 5000, fetcher, log: () => {} });
+  try {
+    const bobLink = await asAsync(BOB, () => relaylink.open(second.url));
+    assert.equal((await bobLink.setWake({ url: "ftp://wake.example/x" })).type, "wake-refused", "only http and https");
+    const stored = await bobLink.setWake({
+      url: "https://wake.example/hook",
+      headers: { Authorization: "Bearer k" },
+      agent: "webhook:grok",
+    });
+    assert.equal(stored.type, "wake-stored");
+    bobLink.close();
+    assert.equal(relay.wakeOf(bob.ownerId).url, "https://wake.example/hook");
+
+    const rows = as(ALICE, () => directory.routingOf(PROJECT, bob.ownerId).rows);
+    const sendOnce = (text) =>
+      asAsync(ALICE, async () => {
+        const link = await relaylink.open(second.url);
+        const message = remote.createRemote({
+          from: { owner: alice.ownerId, vendor: "claude", id: "ses_alice", name: "api-worker" },
+          project: { id: PROJECT, label: "web-app" },
+          target: { owner: bob.ownerId, project: PROJECT, session: rows[0].session, epoch: rows[0].epoch },
+          text,
+        });
+        const answer = await link.send(remote.pack(message, { recipient: peerOf(ALICE, bob.ownerId) }));
+        link.close();
+        return { answer, messageId: message.messageId };
+      });
+
+    // Bob has no machine on this relay, so nobody acknowledges.
+    const first = await sendOnce("A secret text for the wake test.");
+    assert.equal(first.answer.type, "stored");
+    await sleep(400);
+    assert.equal(calls.length, 1, "one request to the wake address");
+    assert.equal(calls[0].url, "https://wake.example/hook");
+    assert.equal(calls[0].init.redirect, "error");
+    assert.equal(calls[0].init.headers.Authorization, "Bearer k");
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.openmsg, "message-waiting");
+    assert.equal(body.agent, "webhook:grok");
+    assert.equal(body.messageId, null, "no id of the sender");
+    assert.match(body.text, /openmsg inbox --wait/);
+    assert.ok(!calls[0].init.body.includes("secret text"), "no text of the sender");
+    assert.ok(!calls[0].init.body.includes(alice.ownerId), "no address of the sender");
+
+    // A second message in the window wakes nobody again.
+    await sendOnce("A second message.");
+    await sleep(400);
+    assert.equal(calls.length, 1, "one wake for one owner in the window");
+
+    const bobAgain = await asAsync(BOB, () => relaylink.open(second.url));
+    assert.equal((await bobAgain.clearWake()).type, "wake-cleared");
+    bobAgain.close();
+    assert.equal(relay.wakeOf(bob.ownerId), null);
+  } finally {
+    await second.close();
+    process.env.OPENMSG_RELAY_HOME = before;
+  }
+});
