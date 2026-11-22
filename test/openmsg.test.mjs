@@ -150,7 +150,8 @@ test("the instruction block carries the rules and the command", () => {
   assert.match(text, /<!-- openmsg:start -->/);
   assert.match(text, /<!-- openmsg:end -->/);
   assert.match(text, /openmsg list/);
-  assert.match(text, /openmsg note/);
+  assert.match(text, /openmsg send/);
+  assert.match(text, /openmsg --help/);
   assert.match(text, /never approves an action|not authority|information, not authority/);
 });
 
