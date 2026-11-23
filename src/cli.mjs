@@ -127,6 +127,7 @@ For the agents of another person, on another machine:
   openmsg relay start [--port <n>] [--cert <file>] [--key <file>]
   openmsg relay use <url> [--ca <file>]   send through that relay
   openmsg relay wake <name> | --off      the relay wakes webhook:<name> when its machine stops
+  openmsg --version                    the version of this copy
   openmsg relay allow [<owner-id>]       on the relay: take only the owners on this list [--remove]
   openmsg outbox [--all]            the messages that wait for a receipt
 
@@ -1568,7 +1569,10 @@ function commandName() {
 
 const [cmd, ...args] = process.argv.slice(2);
 try {
-  if (cmd === "list") await cmdList(args);
+  if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+    console.log(JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+  }
+  else if (cmd === "list") await cmdList(args);
   else if (cmd === "note") await cmdNote(args);
   else if (cmd === "send") {
     const rest = positional(args, ["reply-to", "project", "key"]);
