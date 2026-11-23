@@ -269,8 +269,36 @@ The adapters of version 0.1:
 | OpenCode | Version 2: `POST /api/session/{id}/prompt` on the shared service. Version 1: `POST /session/{id}/prompt_async` | Yes |
 | Gemini CLI | A hook that reads the mailbox at the end of a turn | No |
 | Cursor CLI | A hook that reads the mailbox at the end of a turn | No |
+| Antigravity CLI (`agy`) | A hook that reads the mailbox at the end of a turn | No |
 | A webhook agent | A notice to the HTTP address of the agent. The agent reads the mailbox | Yes |
 | An MCP agent | No entry point. The agent reads the mailbox with a tool | No |
+
+### 7.0 The Antigravity CLI
+
+The Antigravity CLI of Google, the command `agy`, replaced Gemini CLI for a
+personal account. Its address is `agy:<name>`, and the conversation id is the
+session id.
+
+Rules:
+
+1. A live session holds the file
+   `~/.gemini/antigravity-cli/presence/<conversation id>.lock` open. A file
+   that no process holds belongs to a session that ended. Discovery lists
+   only the files that a process holds, and it takes the working directory
+   from that process.
+2. A command that the agent runs gets `ANTIGRAVITY_CONVERSATION_ID`. That
+   variable names the sender.
+3. The hooks are in `~/.gemini/config/hooks.json`, under the name `openmsg`, in
+   the flat shape of that file: an event, then a list of commands, with a
+   timeout in seconds. The hook gets the event as an argument, because its
+   input does not always name it.
+4. At `Stop`, the hook answers `{"decision": "continue", "reason": <text>}`
+   when a message waits. The agent then reads the message in the same turn,
+   with no new prompt of the user. At `SessionStart`, the hook gives the text
+   as a system step. A system step is not a prompt of the user, so rule 9
+   holds.
+5. The hook gives a message one time. It marks the message as read before it
+   answers, so a `Stop` that continues does not give it again.
 
 ### 7.1 An agent that wakes on an HTTP request
 
@@ -605,6 +633,7 @@ The entry points for a project message:
 | Claude Code | The inbox socket of a live session, or the `SessionStart` hook |
 | Cursor CLI | The `sessionStart` and `stop` hooks |
 | Gemini CLI | The `SessionStart` and `AfterAgent` hooks |
+| Antigravity CLI (`agy`) | The `SessionStart` and `Stop` hooks |
 | Codex, OpenCode | None yet |
 
 `openmsg install --hooks` writes the hooks. For Claude Code, it writes a

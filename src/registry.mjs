@@ -432,15 +432,97 @@ export function codexAgentsFromFiles({ maxAgeMs = 12 * 3600 * 1000 } = {}) {
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
+// The Antigravity CLI. A live session holds its presence file open, so the
+// files that a process holds are the live sessions, and that process gives the
+// working directory. Section 7.0 of the spec of 0.1.
+export function agyDir() {
+  return process.env.OPENMSG_AGY_DIR ?? path.join(HOME, ".gemini", "antigravity-cli");
+}
+
+// `lsof -F` gives one field on each line: p<pid>, then n<path> for each file.
+export function parseHolders(text) {
+  const out = new Map();
+  let pid = null;
+  for (const line of String(text).split("\n")) {
+    if (line.startsWith("p")) pid = Number(line.slice(1));
+    else if (line.startsWith("n") && pid) out.set(line.slice(1), pid);
+  }
+  return out;
+}
+
+function agyTitle(dir, id) {
+  try {
+    const m = /title:"((?:[^"\\]|\\.)*)"/.exec(fs.readFileSync(path.join(dir, "annotations", `${id}.pbtxt`), "utf8"));
+    return m ? m[1].replace(/\\"/g, '"') : null;
+  } catch {
+    return null;
+  }
+}
+
+export function agyName(cwd, id) {
+  return `${cwd ? path.basename(cwd) : "agy"}-${String(id).replace(/-/g, "").slice(-4)}`;
+}
+
+export async function agyAgents({ dir = agyDir() } = {}) {
+  let locks = [];
+  let presence;
+  try {
+    // lsof gives the real path, such as /private/var on macOS.
+    presence = fs.realpathSync(path.join(dir, "presence"));
+    locks = fs.readdirSync(presence).filter((f) => f.endsWith(".lock"));
+  } catch {
+    return [];
+  }
+  if (locks.length === 0) return [];
+  let holders = new Map();
+  try {
+    const { stdout } = await run("lsof", ["-F", "pn", ...locks.map((f) => path.join(presence, f))]);
+    holders = parseHolders(stdout);
+  } catch (e) {
+    // lsof exits with 1 when one of the files has no holder, and it still
+    // prints the others.
+    holders = parseHolders(e.stdout ?? "");
+  }
+  const out = [];
+  for (const f of locks) {
+    const pid = holders.get(path.join(presence, f));
+    if (!pid) continue;
+    const id = f.slice(0, -".lock".length);
+    let cwd = null;
+    try {
+      const { stdout } = await run("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-F", "n"]);
+      cwd = stdout.split("\n").find((l) => l.startsWith("n"))?.slice(1) ?? null;
+    } catch {
+      cwd = null;
+    }
+    out.push({
+      vendor: "agy",
+      id,
+      name: agyName(cwd, id),
+      pid,
+      cwd,
+      title: agyTitle(dir, id),
+      status: "unknown",
+      updatedAt: mtime(path.join(dir, "conversations", `${id}.db`)),
+      transport: { kind: "mailbox" },
+    });
+  }
+  return out;
+}
+
 export async function allAgents() {
-  const [claude, opencode, codex] = await Promise.all([
+  const [claude, opencode, codex, agy] = await Promise.all([
     Promise.resolve(claudeAgents()),
     opencodeAgents(),
     codexAgents(),
+    agyAgents(),
   ]);
-  // An agent with no push entry point reports itself from its hook.
+  // An agent with no push entry point reports itself from its hook. A session
+  // that discovery found already is not listed a second time.
+  const found = new Set([...agy].map((a) => `${a.vendor}:${a.id}`));
+  const reported = registered().filter((a) => !found.has(`${a.vendor}:${a.id}`));
   // An agent that wakes on an HTTP request has no session. Its owner named it.
-  return [...claude, ...opencode, ...codex, ...registered(), ...webhookAgents(), ...mcpAgents()];
+  return [...claude, ...opencode, ...codex, ...agy, ...reported, ...webhookAgents(), ...mcpAgents()];
 }
 
 // Discovery of one vendor. The gateway needs the session of one published
@@ -452,6 +534,10 @@ export async function agentsOfVendor(vendor) {
   if (vendor === "codex") {
     const live = await codexAgents();
     return live.length > 0 ? live : codexAgentsFromFiles();
+  }
+  if (vendor === "agy") {
+    const live = await agyAgents();
+    return live.length > 0 ? live : registered().filter((a) => a.vendor === "agy");
   }
   if (vendor === "webhook") return webhookAgents();
   if (vendor === "mcp") return mcpAgents();
@@ -496,7 +582,7 @@ async function ancestors(pid, depth = 8) {
 
 // The agents that can run a command of their own. Each one is a sender apart
 // from the Claude session that started it.
-const OTHER_AGENTS = new Set(["codex", "opencode", "cursor-agent"]);
+const OTHER_AGENTS = new Set(["codex", "opencode", "cursor-agent", "agy"]);
 
 // A program that a Claude session starts, such as an OpenCode server, gets the
 // environment of that session, with its socket. That socket names the sender
@@ -558,6 +644,15 @@ export async function self() {
     const id = process.env.CODEX_THREAD_ID;
     const known = codexAgentsFromFiles({ maxAgeMs: 24 * 3600 * 1000 }).find((a) => a.id === id);
     return known ?? { vendor: "codex", id, name: id.slice(-8), transport: { kind: "codex-queue" } };
+  }
+  // The Antigravity CLI gives the conversation id to every command that its
+  // agent runs. Section 7.0 of the spec of 0.1. It comes before the variables
+  // of Claude Code, because agy can start in a terminal of a Claude session.
+  if (process.env.ANTIGRAVITY_CONVERSATION_ID) {
+    const id = process.env.ANTIGRAVITY_CONVERSATION_ID;
+    const known = (await agyAgents()).find((a) => a.id === id);
+    if (known) return known;
+    return { vendor: "agy", id, name: agyName(process.cwd(), id), cwd: process.cwd(), transport: { kind: "mailbox" } };
   }
   if (process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
     const socket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;

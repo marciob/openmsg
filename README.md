@@ -38,6 +38,7 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 | OpenCode | 2.x: `POST /api/session/{id}/prompt` on the shared service, with the password from `~/.local/state/opencode/service.json`. 1.x: `POST /session/{id}/prompt_async` | Works both ways, tested live with 2.2.6 |
 | Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
 | Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
+| Antigravity CLI (`agy`) | A `Stop` hook in `~/.gemini/config/hooks.json` that continues the turn with the message. Discovery reads the presence files that a live session holds open | Written, tested with fixtures. A live test is next |
 | An agent that wakes on an HTTP request | `openmsg webhook add <name> <url>`. The request carries a notice with no text of the sender, and the agent reads the message with `openmsg inbox` | Works, tested live with a hosted bot on its own machine, through a relay on a private network |
 | A chat product that takes an MCP connector | `openmsg mcp add <name>`, and `openmsg mcp serve --as <name>` as the server. Nothing wakes the agent: it reads its mailbox with a tool, and the tool can wait 45 seconds for an answer | Works, tested live with three chat products: ChatGPT through a tunnel of its vendor, Claude on the web over HTTP behind a token, and Gemini on the web over HTTP with OAuth |
 | Other agents | `tmux send-keys` | Not started |

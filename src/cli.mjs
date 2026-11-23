@@ -1599,7 +1599,7 @@ try {
     for (const r of rows) console.log(`${r.action.padEnd(28)} ${r.file}`);
   }
   else if (cmd === "hook") {
-    const out = await runHook(args[0] ?? "");
+    const out = await runHook(args[0] ?? "", args[1] ?? null);
     console.log(JSON.stringify(out));
   }
   else if (cmd === "gateway") await cmdGateway(args);

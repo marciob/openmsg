@@ -12,9 +12,10 @@
 // - Claude Code: https://code.claude.com/docs/en/hooks
 // - Cursor: https://cursor.com/docs/hooks
 // - Gemini: https://geminicli.com/docs/hooks/reference/
+// - Antigravity CLI: https://antigravity.google/docs/hooks/
 import path from "node:path";
 import { register } from "./selfregistry.mjs";
-import { claudeAgents } from "./registry.mjs";
+import { claudeAgents, agyAgents, agyName } from "./registry.mjs";
 import * as mailbox from "./mailbox.mjs";
 import * as projectbox from "./projectbox.mjs";
 import { render, MAX_HOPS } from "./envelope.mjs";
@@ -59,7 +60,7 @@ function readStdin() {
 }
 
 // Each vendor names the session and the working directory in its own way.
-function readEvent(vendor, input) {
+function readEvent(vendor, input, eventArg = null) {
   if (vendor === "cursor") {
     return {
       event: input.hook_event_name ?? "stop",
@@ -74,6 +75,16 @@ function readEvent(vendor, input) {
       cwd: input.cwd ?? input.workspace_root ?? process.cwd(),
     };
   }
+  if (vendor === "agy") {
+    // The input does not always name the event, so the hook command gives it.
+    // A workspace can come as a file:// URI.
+    const workspace = input.workspacePaths?.[0] ?? input.cwd ?? process.cwd();
+    return {
+      event: eventArg ?? input.hookEventName ?? "Stop",
+      id: input.conversationId ?? "unknown",
+      cwd: String(workspace).startsWith("file://") ? decodeURIComponent(new URL(workspace).pathname) : workspace,
+    };
+  }
   return {
     event: input.hook_event_name ?? "SessionStart",
     id: input.session_id ?? "unknown",
@@ -86,7 +97,7 @@ function agentOf(vendor, { id, cwd }) {
   return { vendor, id, name: `${base}-${String(id).slice(-4)}`, cwd };
 }
 
-export async function runHook(vendor) {
+export async function runHook(vendor, eventArg = null) {
   const raw = await readStdin();
   let input = {};
   try {
@@ -94,7 +105,7 @@ export async function runHook(vendor) {
   } catch {
     // A hook must never stop the agent. An unreadable input gives no message.
   }
-  const info = readEvent(vendor, input);
+  const info = readEvent(vendor, input, eventArg);
   const within = (m) => (m.openmsg?.hops?.length ?? 0) <= MAX_HOPS;
 
   if (vendor === "claude") {
@@ -116,7 +127,15 @@ export async function runHook(vendor) {
     };
   }
 
-  const agent = agentOf(vendor, info);
+  // An input with no session names nobody, so the hook registers nothing.
+  if (info.id === "unknown") return {};
+  // The name of an agy session comes from discovery, so the hook reads the
+  // mailbox that a sender writes to.
+  let agent = agentOf(vendor, info);
+  if (vendor === "agy") {
+    const live = (await agyAgents()).find((a) => a.id === info.id);
+    agent = live ? { vendor, id: info.id, name: live.name, cwd: live.cwd } : { vendor, id: info.id, name: agyName(info.cwd, info.id), cwd: info.cwd };
+  }
   register(agent);
 
   const waiting = mailbox.list(agent, { unreadOnly: true }).filter(within);
@@ -137,6 +156,13 @@ export async function runHook(vendor) {
     // A stop hook submits the text as the next message of the user.
     if (info.event === "sessionStart") return { additional_context: text };
     return { followup_message: text };
+  }
+  if (vendor === "agy") {
+    // Stop with "continue" keeps the turn going, and the reason goes in as a
+    // system message. SessionStart adds a system step. Neither one is a prompt
+    // of the user. Section 7.0 of the spec of 0.1.
+    if (info.event === "SessionStart") return { injectSteps: [{ systemMessage: { systemMessage: text } }] };
+    return { decision: "continue", reason: text };
   }
   if (vendor === "gemini") {
     // An AfterAgent hook that denies sends its reason as a new prompt.

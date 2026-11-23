@@ -17,6 +17,7 @@ export const HOOK_TARGETS = [
   { vendor: "claude", file: path.join(HOME, ".claude", "settings.json") },
   { vendor: "cursor", file: path.join(HOME, ".cursor", "hooks.json") },
   { vendor: "gemini", file: path.join(HOME, ".gemini", "settings.json") },
+  { vendor: "agy", file: path.join(HOME, ".gemini", "config", "hooks.json") },
 ];
 
 // Versions of openmsg before 0.8 wrote the Gemini hooks to this file, in a
@@ -60,6 +61,21 @@ export function geminiConfig(config, command) {
     });
     next.hooks[event] = groups;
   }
+  return next;
+}
+
+// Antigravity CLI: https://antigravity.google/docs/hooks/
+// One file holds named hooks: a name, then each event with a flat list of
+// commands, and a timeout in seconds. The nested shape of Claude Code stops
+// every event of this file, so openmsg writes the flat shape. The other named
+// hooks of the user stay as they are. Section 7.0 of the spec of 0.1.
+export function agyConfig(config, command) {
+  const next = { ...(config ?? {}) };
+  next[MARK] = {
+    enabled: true,
+    SessionStart: [{ type: "command", command: `${command} hook agy SessionStart`, timeout: 10 }],
+    Stop: [{ type: "command", command: `${command} hook agy Stop`, timeout: 10 }],
+  };
   return next;
 }
 
@@ -122,7 +138,7 @@ export function installHooks(command) {
       out.push({ vendor, file, action: "skipped (not valid JSON)" });
       continue;
     }
-    const configOf = { claude: claudeConfig, cursor: cursorConfig, gemini: geminiConfig }[vendor];
+    const configOf = { claude: claudeConfig, cursor: cursorConfig, gemini: geminiConfig, agy: agyConfig }[vendor];
     const after = configOf(before, command);
     fs.writeFileSync(file, JSON.stringify(after, null, 2) + "\n");
     out.push({ vendor, file, action: before ? "updated" : "created" });
@@ -136,6 +152,13 @@ export function uninstallHooks() {
   const out = [];
   for (const { vendor, file } of HOOK_TARGETS) {
     const config = readJson(file);
+    if (vendor === "agy") {
+      if (!config?.[MARK]) continue;
+      delete config[MARK];
+      fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+      out.push({ vendor, file, action: "removed" });
+      continue;
+    }
     if (!config?.hooks) continue;
     let touched = false;
     for (const [event, list] of Object.entries(config.hooks)) {
