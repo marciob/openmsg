@@ -554,7 +554,12 @@ export async function findAgent(query) {
   const matches = agents.filter(
     (a) => (!vendor || a.vendor === vendor) && (a.name === name || a.id === name || a.id?.startsWith(name)),
   );
-  if (matches.length === 0) throw new Error(`no agent matches "${query}". Run: openmsg list`);
+  if (matches.length === 0) {
+    const agy = process.env.ANTIGRAVITY_CONVERSATION_ID
+      ? " If this command runs in the sandbox of agy, the sandbox hides the other sessions: run openmsg outside the sandbox."
+      : "";
+    throw new Error(`no agent matches "${query}". Run: openmsg list.${agy}`);
+  }
   if (matches.length > 1) {
     const names = matches.map((m) => `${m.vendor}:${m.name}`).join(", ");
     throw new Error(`"${query}" matches more than one agent: ${names}`);

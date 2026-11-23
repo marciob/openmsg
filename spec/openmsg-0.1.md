@@ -299,6 +299,9 @@ Rules:
    holds.
 5. The hook gives a message one time. It marks the message as read before it
    answers, so a `Stop` that continues does not give it again.
+6. The sandbox of agy hides the session records of the other agents. A
+   command in the sandbox that finds no agent says so, and it tells the agent
+   to run openmsg outside the sandbox.
 
 ### 7.1 An agent that wakes on an HTTP request
 

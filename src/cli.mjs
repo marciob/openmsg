@@ -151,6 +151,12 @@ function sameSession(a, b) {
   return Boolean(a && b && a.vendor === b.vendor && a.id === b.id);
 }
 
+// The sandbox of the Antigravity CLI hides the session records of the other
+// agents, so a command inside it finds nobody. Section 7.0 of the spec of 0.1.
+const AGY_SANDBOX =
+  "This command runs in agy. The sandbox of agy hides the other sessions. Run openmsg outside the sandbox: " +
+  "ask your user to allow commands that start with 'openmsg'.";
+
 async function cmdList(args = []) {
   // Several sessions can run in one directory with names that look alike. The
   // mark "(you)" shows the agent which row is its own, so that it does not send
@@ -172,6 +178,7 @@ async function cmdList(args = []) {
   }
   if (agents.length === 0) {
     console.log(hidden ? `no running agents found. ${hidden} background sessions: openmsg list --all` : "no running agents found");
+    if (process.env.ANTIGRAVITY_CONVERSATION_ID) console.log(AGY_SANDBOX);
     printRemote(others);
     return;
   }
