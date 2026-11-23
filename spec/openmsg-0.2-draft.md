@@ -99,6 +99,14 @@ Rules:
 8. The keys give the owner id. A record that claims an owner id which its keys
    do not give is false, and a receiver refuses it. A new key is therefore a
    new owner, and the old owner id goes to the revocation list.
+9. The owner id holds 32 bits, so a person can make a second pair of keys
+   that gives the same owner id. The owner id therefore names an owner, and
+   it does not prove one. A machine that holds the record of an owner compares
+   the full keys of each record, roster, and revocation about that owner with
+   the keys that it holds, and it refuses other keys. A roster counts as a
+   roster of this owner only when it carries the keys of this owner. The
+   relay holds the keys of the first hello for each owner id, and it refuses
+   another hello with that owner id and other keys.
 
 ## 4. Transport
 
@@ -192,6 +200,24 @@ Rules:
     0.1. The operator of the relay learns it, and can wake the agent. The
     bound of rule 19 limits the cost of that. A false request wakes the
     agent, and the agent finds no message.
+21. A receipt that travels through the relay carries the receipt that the
+    receiver signed, as section 7 gives it. The relay carries it as it is.
+    The sender changes the state in its outbox only for a signed receipt
+    from the owner that received the message. A receipt with no signature
+    changes nothing, so the relay and the other members cannot tell a
+    sender a false state.
+22. The relay calls a wake address only on the public internet. It refuses
+    an address on its own machine, in a private network, or in a range for
+    links and for groups, and it resolves the name again at each wake. A
+    stranger therefore cannot make the relay call a service that only the
+    relay reaches. The operator of a relay on a private network allows such
+    an address with `OPENMSG_RELAY_WAKE_PRIVATE=1`.
+23. The operator of a relay can give a list of owners, with `openmsg relay
+    allow <owner id>`. With a list, the relay refuses a hello from another
+    owner, and it stores no message for another owner. With no list, the
+    relay takes each owner whose hello proves its keys, and the secret
+    address of the relay is the only bound. The relay also refuses a hello
+    from a machine that its owner revoked in a record that the relay holds.
 
 ## 5. Authentication of a message
 
@@ -333,7 +359,9 @@ Rules:
    over the direct address.
 2. The receiver writes the message to a durable store before it acknowledges.
 3. A retry carries the same `messageId`. The receiver removes a duplicate by the
-   authenticated sender and the `messageId`.
+   authenticated sender and the `messageId`. A `messageId` is a UUID. A
+   receiver refuses another shape before it opens the seal, because the
+   `messageId` can become part of the name of a file.
 4. A conflicting duplicate holds the same `messageId` and the same authenticated
    sender, with different content. The receiver refuses the new arrival, keeps
    the record of the first message, and reports the event. A receiver must never
@@ -503,7 +531,7 @@ A Codex review gave these answers. They are the plan of record.
    |---|---|---|
    | `self` | "this is my public record, and my gateway answers here" | Every member, for an owner that it already holds. |
    | `roster` | "these are the members that I accepted in this project, and what I let each one do" | The other machines of that same owner. |
-   | `revoke-device` | "this machine of mine is gone" | Every member, because only an owner names the machines of that owner. |
+   | `revoke-device` | "this machine of mine is gone" | Every member, because only an owner names the machines of that owner. A revocation holds for that owner and that machine together. A record from one owner does not revoke a machine of another owner. |
 
    A record carries the public keys of its owner, and the owner id comes from
    those keys. A record therefore proves itself, and the relay verifies one

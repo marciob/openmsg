@@ -352,7 +352,9 @@ test("a message that no machine takes wakes the agent of its owner, one time in 
     calls.push({ url, init });
     return new Response(null, { status: 204 });
   };
-  const second = await relay.serve({ port: 0, host: "127.0.0.1", wakeAfterMs: 150, wakeEveryMs: 5000, fetcher, log: () => {} });
+  // The name of the wake address resolves to a public address.
+  const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+  const second = await relay.serve({ port: 0, host: "127.0.0.1", wakeAfterMs: 150, wakeEveryMs: 5000, fetcher, lookup, log: () => {} });
   try {
     const bobLink = await asAsync(BOB, () => relaylink.open(second.url));
     assert.equal((await bobLink.setWake({ url: "ftp://wake.example/x" })).type, "wake-refused", "only http and https");

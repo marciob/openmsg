@@ -19,7 +19,7 @@
 // invitation and a fingerprint, as rule 3.3 says. An owner that this machine
 // does not know waits in a list, with its fingerprint, for the person to
 // accept it.
-import { canonicalBytes } from "./canonical.mjs";
+import { canonical, canonicalBytes } from "./canonical.mjs";
 import * as identity from "./identity.mjs";
 import * as device from "./device.mjs";
 import * as directory from "./directory.mjs";
@@ -116,6 +116,15 @@ export function verifyRecord(record) {
   return device.verifySignedObject(record, { ownerId: record.owner, keys: record.keys }, { project: record.project });
 }
 
+// The owner id holds 32 bits, so it names an owner and does not prove one.
+// Two records are about one owner only when they carry the same keys. Rule 9
+// of section 3 of the spec of 0.2.
+export function sameKeys(a, b) {
+  if (!a || !b) return false;
+  const pair = (k) => canonical({ encryption: k.encryption, signing: k.signing });
+  return pair(a) === pair(b);
+}
+
 // The reader applies what it may apply, and it lists the rest.
 export function apply(project, records, { now = Date.now() } = {}) {
   const me = identity.load();
@@ -130,9 +139,26 @@ export function apply(project, records, { now = Date.now() } = {}) {
       out.refused.push({ owner: record.owner, why: "that record belongs to another project" });
       continue;
     }
+    // The keys that this machine holds for that owner, if it holds any.
+    const held = record.owner === me.ownerId ? me.keys : directory.member(project, record.owner)?.keys;
+    if (held && !sameKeys(held, record.keys)) {
+      out.refused.push({ owner: record.owner, why: "the record carries other keys than the keys that this machine holds for that owner" });
+      continue;
+    }
+    // A machine that its owner revoked signs nothing more.
+    const signer = record.signature?.device;
+    if (signer && directory.isDeviceRevoked(project, signer, record.owner)) {
+      out.refused.push({ owner: record.owner, why: `the machine ${signer} that signed it is revoked` });
+      continue;
+    }
     if (record.kind === "revoke-device") {
-      // Only an owner says which machines belong to that owner.
-      if (!directory.isDeviceRevoked(project, record.device)) {
+      // Only an owner says which machines belong to that owner, and only for
+      // an owner that this machine holds.
+      if (!held) {
+        out.refused.push({ owner: record.owner, why: "a revocation from an owner that this machine does not hold" });
+        continue;
+      }
+      if (!directory.isDeviceRevoked(project, record.device, record.owner)) {
         directory.revokeDevice(project, record.device, record.reason ?? `${record.owner} revoked it`, { owner: record.owner });
         out.revoked.push({ owner: record.owner, device: record.device });
       }
@@ -171,6 +197,10 @@ export function apply(project, records, { now = Date.now() } = {}) {
       if (identity.ownerIdOf(member.keys) !== member.ownerId) continue;
       if (directory.isRevoked(project, member.ownerId)) continue;
       const known = directory.member(project, member.ownerId);
+      if (known && !sameKeys(known.keys, member.keys)) {
+        out.refused.push({ owner: member.ownerId, why: "the roster carries other keys than the keys that this machine holds for that owner" });
+        continue;
+      }
       if (known) {
         if (member.endpoint && member.endpoint !== known.endpoint) {
           directory.setEndpoint(project, member.ownerId, member.endpoint);

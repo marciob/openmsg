@@ -144,7 +144,8 @@ export function revokeDevice(projectId, deviceId, reason = null, { owner = null 
   const entry = data.projects[projectId];
   if (!entry) throw new Error(`no project ${projectId} in the directory`);
   entry.revokedDevices = entry.revokedDevices ?? [];
-  if (entry.revokedDevices.some((r) => r.device === deviceId)) return entry.revokedDevices.find((r) => r.device === deviceId);
+  const same = (r) => r.device === deviceId && (r.owner ?? null) === owner;
+  if (entry.revokedDevices.some(same)) return entry.revokedDevices.find(same);
   // `owner` names the person whose machine it is. That person tells the
   // other members, and no other person speaks for those machines.
   const record = { device: deviceId, owner, at: now(), reason };
@@ -183,8 +184,13 @@ export function dropPending(projectId, ownerId) {
   return true;
 }
 
-export function isDeviceRevoked(projectId, deviceId) {
-  return Boolean(project(projectId)?.revokedDevices?.some((r) => r.device === deviceId));
+// A revocation holds for one owner and one machine together. A row with no
+// owner is a decision of the person at this machine, and it holds for every
+// owner. Section 12.1 of the spec of 0.2.
+export function isDeviceRevoked(projectId, deviceId, ownerId = null) {
+  return Boolean(
+    project(projectId)?.revokedDevices?.some((r) => r.device === deviceId && (!r.owner || !ownerId || r.owner === ownerId)),
+  );
 }
 
 export function revokedDevices(projectId) {

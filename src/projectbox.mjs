@@ -6,6 +6,7 @@
 // One file for each waiting message. A session takes a message with a rename,
 // and a rename is atomic, so two sessions never take the same message.
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { encodeName } from "./mailbox.mjs";
@@ -44,7 +45,7 @@ export function dirOfAddress(target) {
 // A message with a key replaces the waiting message with that key.
 function fileName(message) {
   const key = message.openmsg?.key;
-  return key ? `key-${encodeName(key)}.json` : `${message.messageId}.json`;
+  return key ? `key-${encodeName(key)}.json` : `${encodeName(message.messageId)}.json`;
 }
 
 export function put(dir, message) {
@@ -53,7 +54,9 @@ export function put(dir, message) {
   const file = path.join(box, fileName(message));
   // Write, then rename. A reader never sees half a file, and a key replaces
   // the old message in one step.
-  const tmp = path.join(box, `.tmp-${message.messageId}`);
+  // The name of the temporary file comes from this program, never from the
+  // message, so no text of a sender names a path.
+  const tmp = path.join(box, `.tmp-${randomUUID()}`);
   fs.writeFileSync(tmp, JSON.stringify(message));
   fs.renameSync(tmp, file);
   return file;
@@ -160,7 +163,7 @@ function takeFile(dir, file) {
   fs.mkdirSync(taken, { recursive: true });
   const message = read(file);
   if (!message) return null;
-  const target = path.join(taken, `${message.messageId}.json`);
+  const target = path.join(taken, `${encodeName(message.messageId)}.json`);
   try {
     fs.renameSync(file, target);
   } catch {

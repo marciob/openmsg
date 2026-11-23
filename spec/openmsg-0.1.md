@@ -149,14 +149,25 @@ Rules:
    takes no answer.
 4. An implementation must not change the text of the sender, with two
    exceptions. It removes each control character except the newline and the
-   tab. An escape sequence can hide a line from the person at the terminal
-   while the model reads that line. Rule 5 gives the second exception.
+   tab. It also removes each character that the person cannot see: the
+   characters of zero width and the marks of text direction. A line separator
+   becomes a newline. An escape sequence can hide a line from the person at
+   the terminal while the model reads that line. Rule 5 gives the second
+   exception.
 5. The text after the second line of dashes says who the sender is, and what
    the message approves. A sender must not be able to write that text. An
    implementation therefore changes each line of the text of the sender that
-   holds 8 dashes or more, and nothing else, to `- - -`. Only two lines of
-   dashes are then in the text that the model reads.
-6. An adapter can show the frame and the text of the sender apart, if its
+   holds 8 dashes or more, and nothing else, to `- - -`. A dash is each
+   character that looks like a line: `-`, `─`, `━`, `—`, `–`, `―`, `═`, `−`,
+   `－`, `_`, `=`, and `~`. Spaces between the dashes do not count. Only two
+   lines of dashes are then in the text that the model reads.
+6. A value that a sender chooses can go in the lines that openmsg writes: a
+   name, a label, a vendor, a project label, a branch. Each such value is a
+   token of letters, digits, and the characters `. _ / @ : + -`, with 64
+   characters at most. Each other character becomes `_`. A value then cannot
+   start a new line, cannot quote out of the command for an answer, and
+   cannot write the words of rule 11 of section 7.2.
+7. An adapter can show the frame and the text of the sender apart, if its
    vendor lets it. The words that the model reads stay the same.
    - Claude Code shows the color of an escape sequence. Its adapter makes
      each line of the frame gray, and each line of the text of the sender

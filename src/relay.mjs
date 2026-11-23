@@ -13,10 +13,12 @@ import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import net from "node:net";
+import dns from "node:dns/promises";
 import { canonicalBytes } from "./canonical.mjs";
 import { ownerIdOf } from "./identity.mjs";
 import { verifySignedObject } from "./device.mjs";
-import { verifyRecord, MAX_RECORD_BYTES } from "./dirsync.mjs";
+import { verifyRecord, sameKeys, MAX_RECORD_BYTES } from "./dirsync.mjs";
 import { accepts, handshake } from "./wsframe.mjs";
 
 export const LIMITS = {
@@ -50,6 +52,74 @@ function safeName(id) {
   // An owner id and a message id both come from this program, and a broken
   // client can still send another text. Only these characters reach the disk.
   return String(id).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
+}
+
+// The owner id holds 32 bits, so a second pair of keys can give the same
+// owner id. The relay holds the keys of the first hello for each owner id, and
+// it refuses other keys for that owner id. Rule 9 of section 3 of the spec of
+// 0.2.
+export function pinnedKeys(owner) {
+  try {
+    return JSON.parse(fs.readFileSync(dir("keys", `${safeName(owner)}.json`), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function pinKeys(owner, keys) {
+  const held = pinnedKeys(owner);
+  if (held) return sameKeys(held, keys);
+  const folder = dir("keys");
+  fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+  const file = path.join(folder, `${safeName(owner)}.json`);
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ encryption: keys.encryption, signing: keys.signing }), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+  return true;
+}
+
+// The owners that this relay takes. With no list, the relay takes any owner
+// whose hello proves its keys, and the secret address of the relay is the
+// only bound. The operator writes the list with `openmsg relay allow`. Rule
+// 23 of section 4 of the spec of 0.2.
+export function allowedOwners() {
+  try {
+    const list = JSON.parse(fs.readFileSync(dir("owners.json"), "utf8"));
+    return Array.isArray(list) ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+export function allowOwner(owner, { remove = false } = {}) {
+  if (!/^o_[0-9a-f]{8}$/.test(owner)) throw new Error(`"${owner}" is not an owner id, such as o_1a2b3c4d`);
+  const list = new Set(allowedOwners() ?? []);
+  if (remove) list.delete(owner);
+  else list.add(owner);
+  fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
+  const file = dir("owners.json");
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify([...list].sort()), { mode: 0o600 });
+  fs.renameSync(`${file}.tmp`, file);
+  return [...list].sort();
+}
+
+function takes(owner) {
+  const list = allowedOwners();
+  return list === null || list.includes(owner);
+}
+
+// A machine that its owner revoked, in a record that this relay holds for
+// any project.
+export function deviceRevokedAt(owner, device) {
+  if (!device) return false;
+  let projects = [];
+  try {
+    projects = fs.readdirSync(dir("dir"));
+  } catch {
+    return false;
+  }
+  const name = `${safeName(owner)}.revoke-device.${safeName(device)}.json`;
+  return projects.some((p) => fs.existsSync(path.join(dir("dir", p), name)));
 }
 
 export function store(owner, messageId, record) {
@@ -128,6 +198,50 @@ const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 
 // The owner gives the address, and a broken client can give anything. Only
 // an http or https URL, and headers with no line break, reach the disk.
+// An address inside a network, or on the machine of the relay. A wake to one
+// of these lets a stranger make the relay call a service that the internet
+// does not reach. Rule 22 of section 4 of the spec of 0.2. The operator of a
+// relay on a private network allows them with OPENMSG_RELAY_WAKE_PRIVATE=1.
+export function isPrivateAddress(ip) {
+  let text = String(ip).toLowerCase().replace(/^\[|\]$/g, "");
+  // An IPv4 address inside IPv6, in its two forms: ::ffff:127.0.0.1 and
+  // ::ffff:7f00:1. URL writes the second form.
+  const mapped = text.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) text = mapped[1];
+  const hex = text.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hex) {
+    const [hi, lo] = [parseInt(hex[1], 16), parseInt(hex[2], 16)];
+    text = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
+  if (net.isIPv4(text)) {
+    const [a, b] = text.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  if (net.isIPv6(text)) {
+    return text === "::" || text === "::1" || /^f[cd]/.test(text) || /^fe[89ab]/.test(text) || /^ff/.test(text);
+  }
+  return false;
+}
+
+function privateWakeAllowed() {
+  return process.env.OPENMSG_RELAY_WAKE_PRIVATE === "1";
+}
+
+// The relay resolves the name at each wake, so a name that points inside a
+// network later is refused too.
+export async function publicHost(hostname, lookup = dns.lookup) {
+  if (privateWakeAllowed()) return true;
+  const bare = hostname.replace(/^\[|\]$/g, "");
+  if (net.isIP(bare)) return !isPrivateAddress(bare);
+  try {
+    const all = await lookup(bare, { all: true });
+    return all.length > 0 && all.every((a) => !isPrivateAddress(a.address));
+  } catch {
+    return false;
+  }
+}
+
 export function checkWake(wake) {
   let url;
   try {
@@ -136,6 +250,10 @@ export function checkWake(wake) {
     return "the wake address is not a URL";
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return "the wake address is not http or https";
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (!privateWakeAllowed() && (host === "localhost" || host.endsWith(".localhost") || isPrivateAddress(host))) {
+    return "the wake address is inside a network, and the relay calls only public addresses";
+  }
   const headers = wake?.headers ?? {};
   if (typeof headers !== "object" || Array.isArray(headers)) return "the headers are not an object";
   for (const [name, value] of Object.entries(headers)) {
@@ -309,6 +427,8 @@ export async function serve({
   wakeAfterMs = LIMITS.wakeAfterMs,
   wakeEveryMs = LIMITS.wakeEveryMs,
   fetcher = fetch,
+  // The resolver of the names of wake addresses. A test gives its own.
+  lookup = dns.lookup,
 } = {}) {
   const answer = (req, res) => {
     res.writeHead(426, { "content-type": "text/plain" });
@@ -348,13 +468,17 @@ export async function serve({
         const last = lastWake.get(target) ?? 0;
         if (Date.now() - last < wakeEveryMs) return;
         lastWake.set(target, Date.now());
-        fetcher(address.url, {
+        publicHost(new URL(address.url).hostname, lookup)
+          .then((ok) => {
+            if (!ok) throw Object.assign(new Error("private"), { cause: { code: "the address is inside a network" } });
+            return fetcher(address.url, {
           method: "POST",
           headers: { ...(address.headers ?? {}), "content-type": "application/json" },
           body: JSON.stringify(wakeNotice(address)),
           signal: AbortSignal.timeout(10_000),
           redirect: "error",
-        })
+            });
+          })
           .then(async (res) => {
             // The body is not read. The relay learns the status, and nothing more.
             await res.body?.cancel().catch(() => {});
@@ -407,6 +531,21 @@ export async function serve({
           stop("the hello does not prove that key");
           return;
         }
+        if (!takes(named.owner)) {
+          log(`refused a hello for ${named.owner}: that owner is not on the list of this relay`);
+          stop("this relay does not take that owner");
+          return;
+        }
+        if (deviceRevokedAt(named.owner, named.device)) {
+          log(`refused a hello for ${named.owner}: its owner revoked the machine ${named.device}`);
+          stop("the owner revoked this machine");
+          return;
+        }
+        if (!pinKeys(named.owner, frame.keys)) {
+          log(`refused a hello for ${named.owner}: other keys than the keys of the first hello`);
+          stop("another owner holds that owner id");
+          return;
+        }
         owner = named.owner;
         machine = named.device ?? "owner";
         const machines = owners.get(owner) ?? new Map();
@@ -433,7 +572,7 @@ export async function serve({
         // The machine that holds the message answers with receipt-taken, and
         // the relay forgets the receipt.
         for (const row of receipts(owner)) {
-          answer({ type: "receipt", messageId: row.messageId, status: row.status, reason: row.reason });
+          answer({ type: "receipt", messageId: row.messageId, status: row.status, reason: row.reason, signed: row.signed ?? null });
         }
         return;
       }
@@ -529,6 +668,12 @@ function handle(frame, owner, answer, owners, log, wake = null) {
       answer({ type: "refused", messageId: wire.messageId, reason: "sender-mismatch" });
       return;
     }
+    // A relay with a list stores nothing for an owner outside it, so a
+    // stranger cannot fill the disk with made-up targets.
+    if (!takes(target)) {
+      answer({ type: "refused", messageId: wire.messageId, reason: "unknown-target" });
+      return;
+    }
     if (wire.expiresAt && Date.parse(wire.expiresAt) <= Date.now()) {
       answer({ type: "refused", messageId: wire.messageId, reason: "expired" });
       return;
@@ -575,7 +720,10 @@ function handle(frame, owner, answer, owners, log, wake = null) {
   if (frame.type === "ack") {
     // The receiver read the message. The relay keeps no copy after that.
     drop(owner, frame.messageId);
-    const receipt = { type: "receipt", messageId: frame.messageId, status: frame.status, reason: frame.reason ?? null };
+    // The signed receipt goes to the sender as it is. The relay cannot write
+    // one, so it cannot tell a sender a false state.
+    const signed = frame.signed && Buffer.byteLength(JSON.stringify(frame.signed)) <= 4096 ? frame.signed : null;
+    const receipt = { type: "receipt", messageId: frame.messageId, status: frame.status, reason: frame.reason ?? null, signed };
     // A sender that is offline gets the receipt on its next connection.
     if (frame.to && push(owners, frame.to, receipt) === 0) keepReceipt(frame.to, receipt);
     log(`${owner} acknowledged ${frame.messageId}: ${frame.status}`);
@@ -597,6 +745,7 @@ function handle(frame, owner, answer, owners, log, wake = null) {
     if (Buffer.byteLength(JSON.stringify(record ?? {})) > LIMITS.recordBytes) return answer2("too-big");
     // An owner publishes about itself, and about nobody else.
     if (record?.owner !== owner) return answer2("sender-mismatch");
+    if (!sameKeys(pinnedKeys(owner), record?.keys)) return answer2("other-keys");
     const why = verifyRecord(record);
     if (why) return answer2(why);
     if (!mayRead(record.project, owner) && ownersIn(record.project) >= LIMITS.ownersPerProject) {

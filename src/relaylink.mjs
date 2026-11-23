@@ -219,8 +219,11 @@ export async function open(url, handlers = {}) {
     return answer;
   }
 
-  function ack(messageId, to, status, reason = null) {
-    connection.send(JSON.stringify({ type: "ack", messageId, to, status, reason }));
+  // `signed` is the receipt that the receiver signed. The relay carries it to
+  // the sender as it is, and the sender verifies it. Rule 21 of section 4 of
+  // the spec of 0.2.
+  function ack(messageId, to, status, reason = null, signed = null) {
+    connection.send(JSON.stringify({ type: "ack", messageId, to, status, reason, signed }));
   }
 
   // The wake address of this owner, for an agent whose machine stops between

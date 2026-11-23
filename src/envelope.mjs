@@ -46,8 +46,29 @@ export function shortId(messageId) {
 // An escape sequence can hide a line from the person at the terminal while the
 // model still reads it. The text of the sender therefore keeps no control
 // character except the newline and the tab.
+//
+// A character of zero width, or a mark of text direction, can hide a word
+// from the person as well, so it goes too. A line separator becomes a newline,
+// because a model reads it as one. Rule 4 of section 5 of the spec of 0.1.
+const INVISIBLE = /[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]/g;
 export function clean(text) {
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+  return String(text)
+    .replace(/[\u2028\u2029]/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+    .replace(INVISIBLE, "");
+}
+
+// A value that a sender chooses, in a line that openmsg writes: a name, a
+// label, a branch. It cannot start a line, quote out of a command, or write a
+// sentence. Rule 6 of section 5 of the spec of 0.1.
+export function token(value) {
+  const text = String(value ?? "").replace(/[^A-Za-z0-9._/@:+-]/g, "_").slice(0, 64);
+  return text === "" ? "_" : text;
+}
+
+// The address of an agent, as a line of openmsg writes it.
+export function shownAddress(agent) {
+  return `${token(agent.vendor)}:${token(agent.name ?? agent.id)}`;
 }
 
 // The line of dashes that opens and closes the text of the sender.
@@ -65,14 +86,27 @@ export function header(fields) {
 // adapter shows the frame and the body apart in its own way, and the model
 // reads the same words in each case.
 export function layout(head, body, foot) {
-  return { head, body: unframed(clean(body)), foot };
+  // A line of the frame stays one line, whatever value went into it.
+  const line = (l) => clean(l).replace(/[\n\r]/g, " ");
+  return { head: head.map(line), body: unframed(clean(body)), foot: foot.map(line) };
 }
 
 // A sender can write a line of dashes, and then lines that look like the
 // lines of openmsg after the text. The lines after the text say who the
 // sender is, so no line of the text is a line of dashes.
+//
+// A dash is each character that looks like a line, and spaces between the
+// dashes do not count. Rule 5 of section 5 of the spec of 0.1.
+const DASH = /^[-─━—–―═−－_=~‐‑‒⁃﹘﹣]$/u;
+const SPACE = /[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/gu;
 export function unframed(text) {
-  return text.replace(/^[ \t]*[─━—–-]{8,}[ \t]*$/gmu, "- - -");
+  return text
+    .split("\n")
+    .map((l) => {
+      const chars = [...l.replace(SPACE, "")];
+      return chars.length >= 8 && chars.every((c) => DASH.test(c)) ? "- - -" : l;
+    })
+    .join("\n");
 }
 
 // With `ansi`, each line of the frame is gray, and each line of the body is
@@ -151,7 +185,7 @@ export function layoutOfAnswer(row) {
 // The layout of a message of 0.1. The header states the source, so the
 // receiving model never treats the message as an instruction from its user.
 export function layoutOf(message) {
-  const from = address(message.openmsg.from);
+  const from = shownAddress(message.openmsg.from);
   const id = shortId(message.messageId);
   // A script, such as a scheduled check, is not a session. It takes no answer.
   const script = message.openmsg.from.vendor === "shell" || message.openmsg.from.unresolved;

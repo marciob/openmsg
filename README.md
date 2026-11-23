@@ -151,6 +151,11 @@ What holds:
   because it needs that to route. The product does not pretend otherwise.
   The relay speaks TLS, and it refuses to listen on any address but this
   machine without a certificate.
+- **A relay takes only the owners of its team.** On the machine of the relay,
+  name each owner with `openmsg relay allow <owner-id>`. Without a list, any
+  owner that finds the address of the relay can connect, and the secret
+  address is the only bound. The relay calls a wake address only on the
+  public internet.
 - **A signature proves the person, and a fingerprint proves the key.** Two
   people compare a fingerprint out of band before the first message.
 - **Each machine holds its own key.** The owner key stays on one machine and

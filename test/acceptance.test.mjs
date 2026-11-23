@@ -420,7 +420,10 @@ test("13. a key revoked after the message entered the queue", async () => {
   await gate.ready;
   await sleep(700);
   assert.equal(bobReads().length, before, "no model read it");
-  const row = as(BOB, () => inbound.find(wire.messageId));
+  // A refused message gets a record of its own, so a false copy cannot touch
+  // the record of a real message. The id that it claims stays beside it.
+  assert.equal(as(BOB, () => inbound.find(wire.messageId)), null);
+  const row = as(BOB, () => inbound.list().find((r) => r.claimedId === wire.messageId));
   assert.equal(row.status, "refused");
   assert.equal(row.reason, "revoked-sender");
   assert.equal(relay.queued(bob.ownerId).length, 0, "a refusal also tells the relay to forget the message");

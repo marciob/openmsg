@@ -127,6 +127,7 @@ For the agents of another person, on another machine:
   openmsg relay start [--port <n>] [--cert <file>] [--key <file>]
   openmsg relay use <url> [--ca <file>]   send through that relay
   openmsg relay wake <name> | --off      the relay wakes webhook:<name> when its machine stops
+  openmsg relay allow [<owner-id>]       on the relay: take only the owners on this list [--remove]
   openmsg outbox [--all]            the messages that wait for a receipt
 
 A message to another person goes to "claude:api-worker@alice".
@@ -1111,9 +1112,29 @@ async function cmdRelay(args) {
     console.log(`relay listens on ${running.url}, store in ${relay.home()}`);
     console.log("It carries sealed bytes. It cannot read a message.");
     console.log("It learns who writes to whom, when, and in which project.");
+    const owners = relay.allowedOwners();
+    if (owners === null) {
+      console.log("WARNING: no list of owners. Any owner that finds this address can connect and store messages.");
+      console.log("Name the owners of the team with: openmsg relay allow <owner-id>");
+    } else {
+      console.log(`It takes ${owners.length} owners: ${owners.join(", ") || "none"}`);
+    }
     const stop = () => running.close().then(() => process.exit(0));
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
+    return;
+  }
+  if (sub === "allow") {
+    // On the machine of the relay. The list holds from the next hello.
+    const off = rest.includes("--remove");
+    const [owner] = rest.filter((a) => !a.startsWith("--"));
+    if (!owner) {
+      const list = relay.allowedOwners();
+      console.log(list === null ? "no list: the relay takes any owner" : list.join("\n") || "an empty list: the relay takes no owner");
+      return;
+    }
+    const list = relay.allowOwner(owner, { remove: off });
+    console.log(`${off ? "removed" : "added"} ${owner}. The relay takes ${list.length} owners. A connection that is open now stays open until it ends.`);
     return;
   }
   if (sub === "use") {

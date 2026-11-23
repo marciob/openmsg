@@ -284,8 +284,11 @@ async function receiveOne(wire, { deliver = deliverLocal, now = Date.now(), log 
     opened = remote.open(wire, { now });
   } catch (e) {
     const reason = e.reason ?? "bad-shape";
+    // A refused message gets a record of its own. The id that it claims is
+    // not verified, so it must not touch the record of a real message.
     inbound.put({
-      messageId: wire?.messageId ?? `unknown-${randomUUID()}`,
+      messageId: `refused-${randomUUID()}`,
+      claimedId: typeof wire?.messageId === "string" ? wire.messageId.slice(0, 80) : null,
       status: reason === "expired" ? "expired" : "refused",
       reason,
       detail: e.message,
@@ -582,24 +585,28 @@ function handleReceipt(body) {
 
 // The receiver tells the sender which state the message reached. It uses the
 // relay when the message came that way, and the direct address otherwise.
-export async function reportState(record, status, { reason = null } = {}) {
-  const member = directory.member(record.project, record.from.owner);
-  if (!member) return { sent: false, why: "that sender is not a member any more" };
-  const body = signObject({
+function signedReceipt(project, messageId, status, reason = null) {
+  return signObject({
     kind: "receipt",
     version: 2,
     owner: identity.load().ownerId,
-    project: record.project,
-    messageId: record.messageId,
+    project,
+    messageId,
     status,
     reason,
     at: new Date().toISOString(),
   });
+}
+
+export async function reportState(record, status, { reason = null } = {}) {
+  const member = directory.member(record.project, record.from.owner);
+  if (!member) return { sent: false, why: "that sender is not a member any more" };
+  const body = signedReceipt(record.project, record.messageId, status, reason);
   if (record.via === "relay") {
     const url = settings().relay;
     if (!url) return { sent: false, why: "this owner has no relay" };
     const link = await relaylink.open(url);
-    link.ack(record.messageId, record.from.owner, status, reason);
+    link.ack(record.messageId, record.from.owner, status, reason, body);
     link.close();
     return { sent: true, how: "relay" };
   }
@@ -794,15 +801,30 @@ export async function joinRelay(url, { log = () => {}, deliver = deliverLocal, f
       // The acknowledgement tells the relay to forget the message, and it
       // tells the sender what happened here. A refusal is an answer too, and
       // without it the message waits at the relay for ever.
-      link.ack(wire.messageId, from, out.status, out.reason ?? null);
+      const project = typeof wire?.project?.id === "string" ? wire.project.id : null;
+      const signed = project ? signedReceipt(project, wire.messageId, out.status, out.reason ?? null) : null;
+      link.ack(wire.messageId, from, out.status, out.reason ?? null, signed);
     },
-    onReceipt: ({ messageId, status, reason }, link) => {
+    onReceipt: ({ messageId, signed }, link) => {
+      // Only a receipt that the receiver signed changes the outbox. The relay
+      // or another member cannot write one. Rule 21 of section 4 of the spec
+      // of 0.2.
+      if (!signed || signed.messageId !== messageId) {
+        log(`ignored a receipt for ${messageId}: it carries no signature of the receiver`);
+        return;
+      }
       // A receipt for a message that this machine did not send changes
       // nothing here, and it stays at the relay for the machine that sent it.
-      const row = outbox.advance(messageId, status, { reason });
-      if (!row) return;
-      if (row.written) log(`receipt ${messageId}: ${status}${reason ? ` (${reason})` : ""}`);
-      link?.takeReceipt?.(messageId, status);
+      const before = outbox.find(messageId);
+      const checked = handleReceipt(signed);
+      if (checked.code === 404) return;
+      if (checked.code !== 200) {
+        log(`ignored a receipt for ${messageId}: ${checked.body.error}`);
+        return;
+      }
+      const row = outbox.find(messageId);
+      if (row && row.state !== before?.state) log(`receipt ${messageId}: ${signed.status}${signed.reason ? ` (${signed.reason})` : ""}`);
+      link?.takeReceipt?.(messageId, signed.status);
     },
     onRoutingRequest: async (frame, link) => {
       const answer = await handleRouting(frame.request ?? {});
