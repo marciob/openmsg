@@ -95,6 +95,19 @@ export function createOAuth({ name, ownerSecret, publicUrl, route, file, now = (
     return Boolean(row && row.exp > now() && store.clients[row.client]);
   }
 
+  // Why a header opens nothing, in words with no part of the token. The
+  // owner reads it in the log.
+  function whyInvalid(header) {
+    if (!header) return "no Authorization header";
+    const m = /^Bearer\s+(\S+)$/i.exec(String(header));
+    if (!m) return "not a Bearer header";
+    const row = store.access[hash(m[1])];
+    if (!row) return "a token that this server did not give, or gave before a restart";
+    if (!(row.exp > now())) return "an expired token";
+    if (!store.clients[row.client]) return "a token of a client that is gone";
+    return null;
+  }
+
   function handles(pathname) {
     return pathname in wellKnown || pathname.startsWith(`${route}/oauth/`);
   }
@@ -280,9 +293,11 @@ ${error ? `<p class="err">${escape(error)}</p>` : ""}
       const key = hash(params.refresh_token ?? "");
       const row = store.refresh[key];
       if (!row || row.exp < now() || row.client !== who.id) {
+        log(`refused a refresh for the client ${who.id}: ${!row ? "a refresh token that this server does not hold, or one that was used before" : row.exp < now() ? "an expired refresh token" : "a refresh token of another client"}`);
         await pause(300);
         return send(400, { error: "invalid_grant" }, cors);
       }
+      log(`gave a new token to the client ${who.id}, for a refresh token`);
       // One refresh token works one time. The answer holds a new one.
       delete store.refresh[key];
       return send(200, issue(who.id), cors);
@@ -299,5 +314,5 @@ ${error ? `<p class="err">${escape(error)}</p>` : ""}
     return Object.entries(store.clients).map(([id, c]) => ({ id, name: c.name, approved: c.approved, at: c.at }));
   }
 
-  return { handles, handle, validToken, resourceMetadataUrl, revokeAll, clients, metadata };
+  return { handles, handle, validToken, whyInvalid, resourceMetadataUrl, revokeAll, clients, metadata };
 }

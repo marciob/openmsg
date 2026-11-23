@@ -367,6 +367,9 @@ export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "
           if (size > MAX_HTTP_BODY) return send(413, { error: "the body is too big" });
           chunks.push(chunk);
         }
+        // One line for each OAuth request, with the step and no secret path.
+        const step = pathname.startsWith(`${route}/oauth/`) ? `oauth/${pathname.slice(route.length + 7)}` : pathname.includes("/.well-known/") ? `.well-known/${pathname.split("/.well-known/")[1].split("/")[0]}` : "oauth";
+        res.on("finish", () => log(`${req.method} ${step} ${res.statusCode}`));
         return await oauth.handle(req, pathname, Buffer.concat(chunks).toString("utf8"), { send, html, redirect, pause });
       }
       if (pathname !== route) return send(404);
@@ -375,7 +378,7 @@ export function serveHttp({ name, token, port = 0, host = "127.0.0.1", route = "
       if (!fixed && !(oauth && oauth.validToken(header))) {
         // A guess costs time, and it learns nothing.
         await pause(300);
-        log(`refused a request with no valid token`);
+        log(`refused a request with no valid token${oauth ? `: ${oauth.whyInvalid(header) ?? "the fixed token is wrong"}` : ""}`);
         req.resume();
         const challenge = oauth ? `Bearer resource_metadata="${oauth.resourceMetadataUrl}"` : "Bearer";
         return send(401, { error: "a valid token is required" }, { "www-authenticate": challenge });

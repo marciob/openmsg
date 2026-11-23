@@ -108,6 +108,9 @@ Limits:
   answer arrives. Then ask Gemini to read its inbox.
 - Nothing wakes Gemini after its turn ends.
 - Custom connectors are not available on every Google account.
+- Gemini keeps one OAuth token for each host name, and it ignores the port.
+  Two connectors on one host name disconnect each other, even on two ports.
+  Give each server its own host name.
 
 ## A message for a later session
 
