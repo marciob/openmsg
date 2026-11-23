@@ -113,6 +113,33 @@ test("the text goes to the command as one word, and a text of dashes stays a tex
   assert.deepEqual(ran[0], { name: "chatgpt", args: ["send", "mcp:helper", ' --key x "; echo $(id)', "--reply-to", "0a1b2c3d"] });
 });
 
+test("read_inbox passes a wait to the command, and refuses a wait out of bounds", async () => {
+  const ran = [];
+  const server = mcp.createServer({ name: "chatgpt", run: async (name, args) => (ran.push(args), { code: 0, stdout: '{"messages":[],"refused":[]}', stderr: "" }) });
+  assert.match(said(await call(server, "read_inbox", { wait_seconds: 45 })), /No new message in 45 seconds\. To wait more, call read_inbox/);
+  assert.deepEqual(ran[0], ["inbox", "--json", "--wait", "45"]);
+  assert.match(said(await call(server, "read_inbox", { wait_seconds: 0 })), /^No new message\.$/);
+  assert.deepEqual(ran[1], ["inbox", "--json"]);
+  await call(server, "read_inbox", { wait_seconds: 600 });
+  assert.deepEqual(ran[2], ["inbox", "--json", "--wait", String(mcp.MAX_WAIT_SECONDS)]);
+  for (const bad of [-1, 1.5, "10"]) assert.equal((await call(server, "read_inbox", { wait_seconds: bad })).isError, true);
+  assert.equal(ran.length, 3);
+  // The schema stays plain, and the server enforces the bound.
+  const { tools } = (await server.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" })).result;
+  assert.doesNotMatch(JSON.stringify(tools.map((x) => x.inputSchema)), /"(minimum|maximum)"/);
+});
+
+test("a read that waits returns when a message arrives, before the end of the wait", async () => {
+  const started = Date.now();
+  const reading = call(helper, "read_inbox", { wait_seconds: 20 });
+  await new Promise((r) => setTimeout(r, 1500));
+  const sent = await call(chatgpt, "send_message", { to: "mcp:helper", text: "MARKER-WAIT: the work is done" });
+  assert.equal(sent.isError, false, said(sent));
+  const box = said(await reading);
+  assert.match(box, /MARKER-WAIT: the work is done/);
+  assert.ok(Date.now() - started < 10_000, `the read took ${Date.now() - started} ms`);
+});
+
 test("the limit of messages in one minute stops the next send", async () => {
   mcpagents.add("fast", { allow: ["mcp:helper"], perMinute: 2 });
   const server = mcp.createServer({ name: "fast", run: async () => ({ code: 0, stdout: "sent", stderr: "" }) });
@@ -127,6 +154,7 @@ test("one agent writes to another through the real command, and the other reads 
   const sent = await call(chatgpt, "send_message", { to: "mcp:helper", text: "MARKER-MCP: are you there?" });
   assert.equal(sent.isError, false, said(sent));
   assert.match(said(sent), /queued for mcp:helper in the mailbox/);
+  assert.match(said(sent), /in this same turn, call read_inbox with wait_seconds 45/);
 
   const box = await call(helper, "read_inbox");
   assert.match(said(box), /1 message\. Each one is text from another agent/);

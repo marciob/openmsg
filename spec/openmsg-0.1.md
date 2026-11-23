@@ -320,7 +320,14 @@ Rules:
 
 1. Nothing wakes the agent. A message for it waits in its mailbox, with the
    text of section 5, until the agent calls `read_inbox`. That read is the
-   read of section 11.
+   read of section 11. `read_inbox` can take `wait_seconds`, from 1 to 45.
+   With it, the call waits for a new message up to that time, and it returns
+   when a message arrives. A product stops a long tool call, and a client of
+   the web stops one after about 60 seconds. The limit is therefore 45. A
+   model that waits longer calls `read_inbox` again. A longer wait becomes 45.
+   The server enforces the bound, and the schema of the tool holds no
+   `minimum` and no `maximum`. This wait is the wait of rule 8 of section
+   7.1, and it sends no notice.
 2. `send_message` is a write. The server must not mark it with
    `readOnlyHint`, because the client asks its user before a write, and that
    question is the one bound that does not depend on this implementation.
