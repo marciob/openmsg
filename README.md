@@ -39,11 +39,75 @@ An address is `<vendor>:<name>`, for example `claude:api-worker`.
 | Cursor CLI | A hook reads the mailbox at the end of each turn | Written, tested with fixtures. A live test needs `CURSOR_API_KEY` |
 | Gemini CLI | The same hook, as an AfterAgent deny | Written, tested with fixtures. Gemini CLI is not installed here |
 | An agent that wakes on an HTTP request | `openmsg webhook add <name> <url>`. The request carries a notice with no text of the sender, and the agent reads the message with `openmsg inbox` | Works, tested live with a hosted bot on its own machine, through a relay on a private network |
-| A chat product that takes an MCP connector | `openmsg mcp add <name>`, and `openmsg mcp serve --as <name>` as the server. Nothing wakes the agent: it reads its mailbox with a tool | Works, tested live with two chat products: one through a tunnel of its vendor, and one over HTTP behind a token |
+| A chat product that takes an MCP connector | `openmsg mcp add <name>`, and `openmsg mcp serve --as <name>` as the server. Nothing wakes the agent: it reads its mailbox with a tool, and the tool can wait 45 seconds for an answer | Works, tested live with three chat products: ChatGPT through a tunnel of its vendor, Claude on the web over HTTP behind a token, and Gemini on the web over HTTP with OAuth |
 | Other agents | `tmux send-keys` | Not started |
 
 A reply is a new message. The receiving agent answers with `openmsg send`. No
 program reads the screen of another program.
+
+## Gemini on the web as an orchestrator
+
+Gemini on the web can send work to your Claude Code and Codex sessions, and
+wait for the answer in the same turn. You do not ask it to check again.
+
+1. Name Gemini as an MCP agent, and give the addresses that it can write to:
+
+   ```
+   openmsg mcp add gemini --allow "claude:*" --allow "codex:*"
+   ```
+
+2. Start its server on the loopback address, on a random path, with OAuth.
+   Gemini takes no fixed token, so it needs OAuth:
+
+   ```
+   P=/$(openssl rand -hex 16)
+   openmsg mcp serve --as gemini --http --port 7813 --path "$P" \
+     --oauth --public-url "https://<your-host>$P"
+   ```
+
+3. Give the port to the internet with TLS, for example with Tailscale Funnel:
+
+   ```
+   tailscale funnel --bg 7813
+   ```
+
+   Gemini also reads the OAuth discovery paths under `/.well-known/`, so the
+   proxy must give the root of the port, not only the path.
+
+4. In Gemini, add a custom connector with the URL `https://<your-host>$P`.
+   The approval page asks for a secret. The secret is in
+   `~/.openmsg/mcp-gemini.token`.
+
+5. In the settings of the connector, set the tools to "always allowed".
+
+Then write in a new chat:
+
+```
+@Openmsg send to claude:api-worker "run the tests and tell me the result"
+```
+
+What happens:
+
+- After a send, the tool tells Gemini to call `read_inbox` with
+  `wait_seconds` 45.
+- `read_inbox` returns when the answer arrives, or after 45 seconds.
+- Gemini calls it again while no answer arrives.
+- A live test passed: one wait of 45.9 seconds, a second call, and the answer
+  in the chat, with no question from the user.
+
+Limits:
+
+- Start the message with `@Openmsg`. Without it, Gemini sometimes answers
+  from its memory and does not call the tool.
+- Use a new chat after a change of the server. An old chat keeps the tools
+  that it got at its start.
+- One report says that Gemini stops a tool call after about 60 seconds.
+  One wait is therefore 45 seconds at most.
+- The number of calls in one turn has a limit, and Google does not give it.
+  Two calls worked. A task of many minutes can end the turn before the
+  answer arrives. Then ask Gemini to read its inbox.
+- Nothing wakes Gemini after its turn ends.
+- Custom connectors are not available on every Google account.
 
 ## A message for a later session
 

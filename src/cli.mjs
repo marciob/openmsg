@@ -71,6 +71,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg mcp serve --as <name>     the MCP server of that agent, on the standard input and output
      [--http --port <n>]            the same server over HTTP on the loopback address, behind a token
      [--token-file <file>]          the file of that token. openmsg makes it when it is not there
+     [--path </route>]              the path of the server. A random path is harder to find. The default is /mcp
      [--oauth --public-url <url>]   OAuth too, for a product that takes no fixed token, such as Gemini
   openmsg spawn <dir>               open a Claude Code session there, in tmux, and give its address
      [--account <name>]             the account: "default" is ~/.claude, "work" is ~/.claude-work
