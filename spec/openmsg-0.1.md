@@ -269,7 +269,7 @@ The adapters of version 0.1:
 | OpenCode | Version 2: `POST /api/session/{id}/prompt` on the shared service. Version 1: `POST /session/{id}/prompt_async` | Yes |
 | Gemini CLI | A hook that reads the mailbox at the end of a turn | No |
 | Cursor CLI | A hook that reads the mailbox at the end of a turn | No |
-| Antigravity CLI (`agy`) | A hook that reads the mailbox at the end of a turn | No |
+| Antigravity CLI (`agy`) | `agy agentapi send-message` to the language server of the session. A hook that reads the mailbox at the end of a turn | Yes, for a session that started with the token of openmsg |
 | A webhook agent | A notice to the HTTP address of the agent. The agent reads the mailbox | Yes |
 | An MCP agent | No entry point. The agent reads the mailbox with a tool | No |
 
@@ -302,6 +302,25 @@ Rules:
 6. The sandbox of agy hides the session records of the other agents. A
    command in the sandbox that finds no agent says so, and it tells the agent
    to run openmsg outside the sandbox.
+7. Each agy process runs a language server on two random ports of
+   127.0.0.1. On its HTTP port, `agy agentapi send-message <conversation id>
+   <text>` starts a turn in a session that waits for its user. The call needs
+   a CSRF token. agy makes a random token at each start, and it gives that
+   token to no hook.
+8. An agy process that starts with `ANTIGRAVITY_SERVER_CSRF_TOKEN` uses that
+   value as its token. openmsg keeps one token in `~/.openmsg/agy.token`, with
+   mode 0600. `openmsg agy` makes that file and it prints a shell function.
+   The function gives the token to agy alone, and not to each program of the
+   shell.
+9. A send to an agy session writes the message to the mailbox, and it marks
+   the message as read. Then the adapter finds the HTTP port of the process:
+   the port where `get-conversation-metadata` succeeds. Then it calls
+   `send-message` with the text that the model reads. A `Stop` hook that runs
+   at the same time therefore does not give the message a second time.
+10. If the push fails, the message goes back to the mailbox as queued, and
+    the `Stop` hook gives it at the end of the next turn. A session that
+    started without the token of openmsg answers "invalid CSRF token", and
+    `openmsg send` says so.
 
 ### 7.1 An agent that wakes on an HTTP request
 

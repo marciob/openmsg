@@ -30,6 +30,7 @@ import * as mcp from "./mcp.mjs";
 import { createOAuth } from "./oauth.mjs";
 import * as spawn from "./spawn.mjs";
 import * as voiceowners from "./voiceowners.mjs";
+import * as agyWake from "./adapters/agy.mjs";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import path from "node:path";
@@ -50,6 +51,7 @@ const USAGE = `openmsg — messages between AI coding agents
   openmsg inbox [--json] [--all]    show the messages for this agent
      [--wait <seconds>]             wait in this turn for a message, with no notice
   openmsg whoami                    show how this agent is addressed
+  openmsg agy                       the token that lets openmsg wake an idle agy session
   openmsg webhook add <name> <url>  name an agent that wakes on an HTTP request
      [--header "Name: value"]       a header that the webhook asks for, such as a key
   openmsg webhook remove <name>     take that agent away
@@ -778,6 +780,19 @@ async function cmdAnswer(args) {
   const result = await deliverLocal(live, message, { parts });
   if (!result.stored) mailbox.put(live, { ...message, rendered: compose(parts) }, result.delivered ? "delivered" : "queued");
   console.log(`${said(row)} is the answer to ${row.id}, and ${address(live)} ${result.delivered ? "has it" : "reads it at the end of its next turn"}.`);
+}
+
+// agy makes a new CSRF token at each start, and no hook gets it. An agy that
+// starts with the token of openmsg can be woken. Section 7.0 of the spec.
+function cmdAgy() {
+  const had = agyWake.readToken();
+  agyWake.ensureToken();
+  console.log(had ? `the token is in ${agyWake.tokenPath()}` : `a new token is in ${agyWake.tokenPath()}`);
+  console.log("Add this line to ~/.zshrc or ~/.bashrc, open a new terminal, and start agy again:");
+  console.log("");
+  console.log("  " + agyWake.shellLine());
+  console.log("");
+  console.log("A session that started before that line cannot be woken. Its messages wait for the end of its next turn.");
 }
 
 function said(row) {
@@ -1623,6 +1638,7 @@ try {
   else if (cmd === "id") cmdId(args);
   else if (cmd === "invite") cmdInvite(args);
   else if (cmd === "dir") await cmdDir(args);
+  else if (cmd === "agy") cmdAgy();
   else if (cmd === "webhook") cmdWebhook(args);
   else if (cmd === "mcp") await cmdMcp(args);
   else if (cmd === "ask") await cmdAsk(args);

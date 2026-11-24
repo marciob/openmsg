@@ -5,6 +5,7 @@ import * as claude from "./adapters/claude.mjs";
 import * as opencode from "./adapters/opencode.mjs";
 import * as codex from "./adapters/codex.mjs";
 import * as webhook from "./adapters/webhook.mjs";
+import * as agy from "./adapters/agy.mjs";
 import * as mailbox from "./mailbox.mjs";
 import { layoutOf, compose, bodyRange } from "./envelope.mjs";
 
@@ -31,6 +32,7 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
   if (agent.vendor === "opencode") return opencode.deliver(agent, message, parts ? { layout: parts } : { text });
   if (agent.vendor === "codex") return codex.deliver(agent, message, { text: plain, highlight: parts ? bodyRange(parts) : null });
   if (agent.vendor === "webhook") return wake(agent, message, plain);
+  if (agent.vendor === "agy") return wakeAgy(agent, message, plain);
   // An agent with no push entry point reads its mailbox: Gemini CLI and Cursor
   // CLI at the end of a turn, and an MCP agent when its user asks. The
   // message waits there, with the text that the model reads. A message from
@@ -44,6 +46,18 @@ export async function deliverLocal(agent, message, { text = null, parts = null }
 function keep(agent, message, rendered) {
   const waits = mailbox.list(agent, { unreadOnly: true }).some((m) => m.messageId === message.messageId);
   if (!waits) mailbox.put(agent, { ...message, rendered }, "queued");
+}
+
+// An agy session. The message goes to the mailbox first, and it is marked as
+// read before the push, so the Stop hook of a turn that ends now does not give
+// it a second time. A push that fails puts it back as queued, and the hook
+// gives it at the end of the next turn.
+async function wakeAgy(agent, message, rendered) {
+  keep(agent, message, rendered);
+  mailbox.markRead(agent, [message.messageId]);
+  const result = await agy.deliver(agent, rendered).catch((e) => ({ delivered: false, transport: "mailbox", detail: e.message }));
+  if (!result.delivered) mailbox.put(agent, { ...message, rendered }, "queued");
+  return { ...result, stored: true };
 }
 
 // An agent that wakes on an HTTP request. The message goes to the mailbox

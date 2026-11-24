@@ -142,3 +142,69 @@ test("a record of the hook does not list an agy session that ended, while discov
   assert.ok(!names.includes("old-3dc9"), "the session that ended is not listed");
   assert.ok(names.some((n) => n.endsWith("-ed9b")), "the live session is listed");
 });
+
+// The wake of an idle session. A fake `agy` stands in for agentapi: it answers
+// only on the port that this test process listens on, and only with the token
+// of openmsg, as the language server of agy does.
+test("a send wakes an idle agy session through agentapi, and the Stop hook does not give it again", async () => {
+  const net = await import("node:net");
+  const server = net.createServer().listen(0, "127.0.0.1");
+  await new Promise((r) => server.once("listening", r));
+  const port = server.address().port;
+  const calls = path.join(ROOT, "agentapi.log");
+  const bin = path.join(ROOT, "fake-agy");
+  fs.writeFileSync(
+    bin,
+    `#!/bin/sh
+if [ "$ANTIGRAVITY_CSRF_TOKEN" != "$(cat "${path.join(ROOT, "server.token")}" 2>/dev/null)" ] || [ "$ANTIGRAVITY_LS_ADDRESS" != "127.0.0.1:${port}" ]; then
+  echo '{"response":{},"error":"rpc error: code = Unauthenticated desc = unauthenticated: invalid CSRF token"}'; exit 0
+fi
+echo "$@" >> "${calls}"
+echo '{"response":{}}'
+`,
+    { mode: 0o755 },
+  );
+  process.env.OPENMSG_AGY_BIN = bin;
+  const agyAdapter = await import("../src/adapters/agy.mjs");
+  const { deliverLocal } = await import("../src/deliver.mjs");
+  // Discovery gives the process that holds the presence file: this test.
+  const agent = (await registry.agyAgents()).find((a) => a.id === LIVE);
+  assert.equal(agent.pid, process.pid);
+  const from = { vendor: "claude", id: "c1", name: "sender-c1" };
+  try {
+    // No token: the message waits for the hook, as before.
+    const first = createMessage({ from, to: agent, text: "wait for the hook" });
+    const r1 = await deliverLocal(agent, first);
+    assert.equal(r1.delivered, false);
+    assert.match(r1.detail, /openmsg agy/);
+    assert.equal(mailbox.list(agent, { unreadOnly: true }).filter((m) => m.messageId === first.messageId).length, 1);
+    mailbox.markRead(agent, [first.messageId]);
+
+    // With the token: one send-message call for the conversation, and the
+    // mailbox holds the message as read.
+    // The session started with the token of openmsg.
+    fs.writeFileSync(path.join(ROOT, "server.token"), agyAdapter.ensureToken());
+    const second = createMessage({ from, to: agent, text: "wake up" });
+    const r2 = await deliverLocal(agent, second);
+    assert.equal(r2.delivered, true, r2.detail);
+    assert.equal(r2.transport, "agy-agentapi");
+    const log = fs.readFileSync(calls, "utf8");
+    assert.match(log, new RegExp(`send-message --title=openmsg ${LIVE} From: claude:sender-c1[\\s\\S]*wake up`));
+    assert.equal(mailbox.list(agent, { unreadOnly: true }).length, 0);
+    assert.deepEqual(await hook("Stop", { conversationId: LIVE, workspacePaths: [agent.cwd] }), {});
+
+    // A session that started with another token: the message goes back to
+    // the queue, and the hook gives it.
+    fs.writeFileSync(agyAdapter.tokenPath(), "another\n");
+    const third = createMessage({ from, to: agent, text: "for the next turn" });
+    const r3 = await deliverLocal(agent, third);
+    assert.equal(r3.delivered, false);
+    assert.match(r3.detail, /started without the token/);
+    const answer = await hook("Stop", { conversationId: LIVE, workspacePaths: [agent.cwd] });
+    assert.equal(answer.decision, "continue");
+    assert.match(answer.reason, /for the next turn/);
+  } finally {
+    delete process.env.OPENMSG_AGY_BIN;
+    server.close();
+  }
+});
