@@ -463,6 +463,17 @@ export function agyName(cwd, id) {
   return `${cwd ? path.basename(cwd) : "agy"}-${String(id).replace(/-/g, "").slice(-4)}`;
 }
 
+// Discovery of agy works where its presence directory can be read. A sandbox
+// can hide it, and then the records of the hook are the only list.
+export function agyDiscoverable({ dir = agyDir() } = {}) {
+  try {
+    fs.accessSync(path.join(dir, "presence"), fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function agyAgents({ dir = agyDir() } = {}) {
   let locks = [];
   let presence;
@@ -518,9 +529,12 @@ export async function allAgents() {
     agyAgents(),
   ]);
   // An agent with no push entry point reports itself from its hook. A session
-  // that discovery found already is not listed a second time.
+  // that discovery found already is not listed a second time. Where agy keeps
+  // presence files, they are the exact list, and a record of its hook names a
+  // session that can be gone for hours.
   const found = new Set([...agy].map((a) => `${a.vendor}:${a.id}`));
-  const reported = registered().filter((a) => !found.has(`${a.vendor}:${a.id}`));
+  const agyExact = agyDiscoverable();
+  const reported = registered().filter((a) => !found.has(`${a.vendor}:${a.id}`) && !(a.vendor === "agy" && agyExact));
   // An agent that wakes on an HTTP request has no session. Its owner named it.
   return [...claude, ...opencode, ...codex, ...agy, ...reported, ...webhookAgents(), ...mcpAgents()];
 }
@@ -537,7 +551,7 @@ export async function agentsOfVendor(vendor) {
   }
   if (vendor === "agy") {
     const live = await agyAgents();
-    return live.length > 0 ? live : registered().filter((a) => a.vendor === "agy");
+    return live.length > 0 || agyDiscoverable() ? live : registered().filter((a) => a.vendor === "agy");
   }
   if (vendor === "webhook") return webhookAgents();
   if (vendor === "mcp") return mcpAgents();

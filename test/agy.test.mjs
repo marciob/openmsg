@@ -134,3 +134,11 @@ test("SessionStart gives a waiting message as a system step, not as a prompt of 
 test("a hook with no message gives an empty answer", async () => {
   assert.deepEqual(await hook("Stop", { conversationId: LIVE }), {});
 });
+
+test("a record of the hook does not list an agy session that ended, while discovery works", async () => {
+  const { register } = await import("../src/selfregistry.mjs");
+  register({ vendor: "agy", id: "9689fbc2-bc6f-431b-8cf3-655c8d623dc9", name: "old-3dc9", cwd: ROOT });
+  const names = (await registry.allAgents()).filter((a) => a.vendor === "agy").map((a) => a.name);
+  assert.ok(!names.includes("old-3dc9"), "the session that ended is not listed");
+  assert.ok(names.some((n) => n.endsWith("-ed9b")), "the live session is listed");
+});
