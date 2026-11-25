@@ -50,6 +50,21 @@ export function shellLine() {
   return `agy() { ANTIGRAVITY_SERVER_CSRF_TOKEN="$(cat "${tokenPath()}" 2>/dev/null)" command agy "$@"; }`;
 }
 
+// The shell of the user can hold a second agy function that replaces the one
+// of openmsg. Then agy starts without the token. The check asks the login
+// shell for its agy function, and it looks for the token file in it.
+export async function shellCheck({ shell = process.env.SHELL ?? "/bin/zsh" } = {}) {
+  let out = "";
+  try {
+    ({ stdout: out } = await run(shell, ["-ic", "type agy; whence -f agy 2>/dev/null || declare -f agy 2>/dev/null"], { timeoutMs: 10_000 }));
+  } catch (e) {
+    out = e.stdout ?? "";
+  }
+  if (!/function/.test(out)) return { ok: false, reason: `${shell} has no agy function` };
+  if (!out.includes("agy.token")) return { ok: false, reason: `the agy function of ${shell} does not give the token. A second agy function can replace the one of openmsg` };
+  return { ok: true };
+}
+
 function run(cmd, args, { env, timeoutMs = 10_000 } = {}) {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -120,7 +135,7 @@ export async function deliver(agent, text) {
   const found = await findPort(agent.pid, token, agent.id);
   if (found.error) {
     const detail = /CSRF/i.test(found.error)
-      ? "this agy session started without the token of openmsg: start agy again with the function of openmsg agy"
+      ? `this agy session started without the token of openmsg. To keep its history, close that agy and run, in a new terminal: agy --conversation ${agent.id}. Run openmsg agy to check the shell function`
       : found.error;
     return { delivered: false, transport: "mailbox", detail };
   }

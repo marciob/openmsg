@@ -784,15 +784,22 @@ async function cmdAnswer(args) {
 
 // agy makes a new CSRF token at each start, and no hook gets it. An agy that
 // starts with the token of openmsg can be woken. Section 7.0 of the spec.
-function cmdAgy() {
+async function cmdAgy() {
   const had = agyWake.readToken();
   agyWake.ensureToken();
   console.log(had ? `the token is in ${agyWake.tokenPath()}` : `a new token is in ${agyWake.tokenPath()}`);
-  console.log("Add this line to ~/.zshrc or ~/.bashrc, open a new terminal, and start agy again:");
-  console.log("");
-  console.log("  " + agyWake.shellLine());
-  console.log("");
-  console.log("A session that started before that line cannot be woken. Its messages wait for the end of its next turn.");
+  const check = await agyWake.shellCheck();
+  if (check.ok) {
+    console.log("the agy function of the shell gives the token: an agy that starts in a new terminal can be woken.");
+  } else {
+    console.log(`${check.reason}.`);
+    console.log("Keep one agy function in ~/.zshrc or ~/.bashrc, with the token, open a new terminal, and start agy again:");
+    console.log("");
+    console.log("  " + agyWake.shellLine());
+    console.log("");
+  }
+  console.log("A session that started without the token cannot be woken. Its messages wait for the end of its next turn.");
+  console.log("To keep the history of such a session, close it and run: agy --conversation <conversation id>.");
 }
 
 function said(row) {
@@ -1638,7 +1645,7 @@ try {
   else if (cmd === "id") cmdId(args);
   else if (cmd === "invite") cmdInvite(args);
   else if (cmd === "dir") await cmdDir(args);
-  else if (cmd === "agy") cmdAgy();
+  else if (cmd === "agy") await cmdAgy();
   else if (cmd === "webhook") cmdWebhook(args);
   else if (cmd === "mcp") await cmdMcp(args);
   else if (cmd === "ask") await cmdAsk(args);

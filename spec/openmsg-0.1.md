@@ -320,7 +320,12 @@ Rules:
 10. If the push fails, the message goes back to the mailbox as queued, and
     the `Stop` hook gives it at the end of the next turn. A session that
     started without the token of openmsg answers "invalid CSRF token", and
-    `openmsg send` says so.
+    `openmsg send` says so. It gives `agy --conversation <id>`: that command
+    starts agy again with the token, and the conversation keeps its history.
+11. A second `agy` function in the shell file replaces the function of
+    openmsg, and agy then starts without the token. `openmsg agy` asks the
+    login shell for its `agy` function, and it says when that function does
+    not read the token file.
 
 ### 7.1 An agent that wakes on an HTTP request
 
