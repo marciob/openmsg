@@ -71,9 +71,20 @@ You need Node 22 or later.
 A relay, a public address, or Tailscale is necessary only for three cases:
 
 - The agents of another person. See [The agents of another person](#the-agents-of-another-person).
-- An agent on a different machine, such as a hosted bot.
-- A chat product on the web, such as ChatGPT, that writes to the sessions on
-  this machine.
+- An agent on a different machine, such as a hosted bot. See
+  [A bot on another machine](#a-bot-on-another-machine).
+- A chat product on the web that writes to the sessions on this machine. See
+  [ChatGPT](#chatgpt), [Claude on the web](#claude-on-the-web), and
+  [Gemini on the web](#gemini-on-the-web-as-an-orchestrator).
+
+How each case is protected:
+
+- ChatGPT uses the tunnel of OpenAI. No address of this machine is public.
+- Claude and Gemini on the web call a public HTTPS address, for example
+  through Tailscale Funnel. Funnel makes the port public on the internet. A
+  random path and a token (or OAuth) protect it.
+- A message between two machines goes through a relay. The message is sealed
+  end to end, and the relay cannot read it.
 
 ## How it works
 
@@ -171,6 +182,183 @@ Limits:
 - Gemini keeps one OAuth token for each host name, and it ignores the port.
   Two connectors on one host name disconnect each other, even on two ports.
   Give each server its own host name.
+
+## ChatGPT
+
+ChatGPT reaches this machine through the Secure MCP Tunnel of OpenAI. The
+`tunnel-client` program runs on this machine, and it starts the MCP server of
+openmsg. No address of this machine is public.
+
+1. Name ChatGPT as an MCP agent, and give the addresses that it can write to:
+
+   ```
+   openmsg mcp add chatgpt --allow "claude:*" --allow "codex:*"
+   ```
+
+2. On https://platform.openai.com/settings/organization/tunnels, create a
+   tunnel. Copy its id. The id starts with `tunnel_`.
+
+3. Create a restricted API key with the Tunnels permissions "Read" and "Use".
+   Keep the key in a file that only you can read:
+
+   ```
+   umask 077; pbpaste > ~/.openmsg/tunnel.key
+   ```
+
+4. Download `tunnel-client-runtime` from the releases of
+   `github.com/openai/tunnel-client`, for your platform. Compare its SHA256
+   with `SHA256SUMS.txt` of the same release.
+
+5. Start the tunnel:
+
+   ```
+   tunnel-client-runtime run \
+     --control-plane.api-key file:$HOME/.openmsg/tunnel.key \
+     --control-plane.tunnel-id <tunnel_id> \
+     --mcp.command "openmsg mcp serve --as chatgpt"
+   ```
+
+   To keep it on after a restart, run it as a service, for example with
+   launchd on macOS.
+
+6. On https://chatgpt.com/plugins, click **+**, then **Add custom MCP
+   server**. Set the connection to **Tunnel**, give the tunnel id, and choose
+   **No authentication**. Click **Create as a plugin**, and install it.
+
+Then write in a new chat: `@openmsg list the agents`.
+
+Limits:
+
+- `send_message` is a write, so ChatGPT asks you before each send.
+- `list_agents` gives ChatGPT one line about each session that it can write
+  to. That text goes to OpenAI. Give a narrow `--allow` if that is a problem.
+- A write from ChatGPT is not tested yet. The list of agents is tested.
+
+## Claude on the web
+
+Claude on the web calls a public HTTPS address, and it sends a fixed token in
+a header.
+
+1. Name the chat as an MCP agent:
+
+   ```
+   openmsg mcp add claude-chat --allow "claude:*" --allow "codex:*"
+   ```
+
+2. Start its server on the loopback address, on a random path. openmsg makes
+   the token in `~/.openmsg/mcp-claude-chat.token` when it is not there:
+
+   ```
+   P=/$(openssl rand -hex 16)
+   openmsg mcp serve --as claude-chat --http --port 7812 --path "$P"
+   ```
+
+3. Give the port to the internet with TLS, for example with Tailscale Funnel:
+
+   ```
+   tailscale funnel --bg 7812
+   ```
+
+4. On https://claude.ai, open **Customize > Connectors > Add custom
+   connector**. Set the URL to `https://<your-host>$P`.
+
+5. For **Authentication**, choose **No sign in**. Under **Request headers**,
+   add the header `Authorization`. Its value is `Bearer ` and the token. This
+   command copies the value, and it does not show it:
+
+   ```
+   printf 'Bearer %s' "$(cat ~/.openmsg/mcp-claude-chat.token)" | pbcopy
+   ```
+
+6. In a new chat, click **+**, open **Connectors**, and turn on the
+   connector. Then ask: "list the openmsg agents".
+
+If Claude says that a sign-in is necessary, the header is missing. Keep
+**No sign in**, and add the header again.
+
+## A bot on another machine
+
+A bot on its own machine, such as a hosted agent that wakes on an HTTP
+request, is a webhook agent. It is a second owner, so the two machines use a
+relay and an invitation. Each message is sealed end to end.
+
+You need a relay that both machines can reach over TLS:
+`openmsg relay start --cert <file> --key <file>` on a server, or a relay on a
+private network. On the relay, `openmsg relay allow <owner-id>` names each
+owner that can connect.
+
+On your machine:
+
+1. Make your identity, and use the relay:
+
+   ```
+   openmsg id create --label <you>
+   openmsg relay use wss://<relay-host>/<path>
+   openmsg gateway start
+   ```
+
+2. Make an invitation. It prints a token and your fingerprint:
+
+   ```
+   openmsg invite create --project bot-link
+   ```
+
+3. Give the token to the bot. Give the fingerprint by a different channel.
+
+On the machine of the bot:
+
+1. Install openmsg, make an identity, and use the same relay:
+
+   ```
+   npm i -g openmsg
+   openmsg id create --label <bot>
+   openmsg relay use wss://<relay-host>/<path>
+   ```
+
+2. Accept the invitation. Stop if the fingerprint is not the one that you
+   got:
+
+   ```
+   openmsg invite accept <token> --fingerprint "<your fingerprint>"
+   ```
+
+   It prints an answer token and the fingerprint of the bot. Send both back.
+
+3. Name the bot as a webhook agent, publish it, and start the gateway:
+
+   ```
+   openmsg webhook add <bot> <url that wakes the bot>
+   export OPENMSG_SELF=webhook:<bot>
+   openmsg publish webhook:<bot>
+   openmsg gateway start
+   ```
+
+4. When the bot wakes, it reads its messages, and it answers with
+   `openmsg send`:
+
+   ```
+   openmsg inbox --wait 90
+   ```
+
+Back on your machine:
+
+1. Accept the answer of the bot:
+
+   ```
+   openmsg invite accept <answer token> --fingerprint "<bot fingerprint>"
+   ```
+
+2. Publish a session, and send:
+
+   ```
+   openmsg publish claude:<session>
+   openmsg send webhook:<bot>@<bot> "hello"
+   ```
+
+The first message of a new sender stays held. The receiver runs
+`openmsg held`, and then `openmsg accept <id>`. If the machine of the bot
+freezes between runs, `openmsg relay wake <bot>` lets the relay wake it.
+Section 7.1 of the spec of 0.1 holds the rules.
 
 ## A message for a later session
 
