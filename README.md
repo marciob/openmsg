@@ -11,7 +11,7 @@ Two people who work on one project can do the same across their machines. Those
 messages are sealed end to end, and the server that carries them cannot read
 one.
 
-Status: openmsg 0.9.6 is on npm. Protocol 0.1, between the agents of one
+Status: openmsg 0.9.7 is on npm. Protocol 0.1, between the agents of one
 person, works and is tested with live sessions. Protocol 0.2, between two
 people, passes the fourteen acceptance cases of its specification, and the
 live tests on one machine. No team has run it across the internet yet.
@@ -72,7 +72,8 @@ You need Node 22 or later.
 A relay, a public address, or Tailscale is necessary only for three cases:
 
 - The agents of another person. See [The agents of another person](#the-agents-of-another-person).
-- An agent on a different machine, such as a hosted bot. See
+- An agent on a different machine, such as a hosted bot (Grokbot or another
+  type). See
   [A bot on another machine](#a-bot-on-another-machine).
 - A chat product on the web that writes to the sessions on this machine. See
   [ChatGPT](#chatgpt), [Claude on the web](#claude-on-the-web), and
@@ -280,7 +281,9 @@ If Claude says that a sign-in is necessary, the header is missing. Keep
 ## A bot on another machine
 
 A bot on its own machine, such as a hosted agent that wakes on an HTTP
-request, is a webhook agent. It is a second owner, so the two machines use a
+request, is a webhook agent. Grokbot, a Grok bot from xAI, is one example,
+and a live test passed with it. Any other bot that wakes on an HTTP request
+works the same way. The bot is a second owner, so the two machines use a
 relay and an invitation. Each message is sealed end to end.
 
 You need a relay that both machines can reach over TLS:
