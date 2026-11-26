@@ -87,7 +87,7 @@ const USAGE = `openmsg — messages between AI coding agents
      [--account <name>]
   openmsg hook <vendor>             run inside a hook of claude, cursor, or gemini
   openmsg install                   let every agent on this machine answer messages
-  openmsg install --hooks           add the hooks for claude, cursor, and gemini
+  openmsg install --hooks           add the hooks for claude, cursor, gemini, and agy, and /whoami for claude
   openmsg install --project [dir]   the same, for one project only
   openmsg uninstall [--project]     remove what install wrote
 

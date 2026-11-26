@@ -86,16 +86,64 @@ function isOurs(h, vendor = "claude") {
   return String(h.command ?? "").includes(MARK) && String(h.command ?? "").includes(`hook ${vendor}`);
 }
 
+// SessionStart gives the project messages to a new session. UserPromptSubmit
+// answers the prompt "/whoami" with no model call. UserPromptSubmit takes no
+// matcher, so its group has none.
 export function claudeConfig(config, command) {
   const next = config ?? {};
   next.hooks = next.hooks ?? {};
-  const groups = withoutOurs(next.hooks.SessionStart ?? [], "claude");
-  groups.push({
+  const start = withoutOurs(next.hooks.SessionStart ?? [], "claude");
+  start.push({
     matcher: "startup|resume|clear",
     hooks: [{ type: "command", command: `${command} hook claude`, timeout: 10 }],
   });
-  next.hooks.SessionStart = groups;
+  next.hooks.SessionStart = start;
+  const prompt = withoutOurs(next.hooks.UserPromptSubmit ?? [], "claude");
+  prompt.push({ hooks: [{ type: "command", command: `${command} hook claude`, timeout: 10 }] });
+  next.hooks.UserPromptSubmit = prompt;
   return next;
+}
+
+// The /whoami command of Claude Code. The hook answers first. When the hook
+// finds no record of the session, the command runs `openmsg whoami`. A file
+// that the user wrote stays: openmsg writes and removes only a file with its
+// mark.
+export const WHOAMI_FILE = path.join(HOME, ".claude", "commands", "whoami.md");
+const WHOAMI_MARK = "<!-- written by openmsg install --hooks -->";
+
+export function whoamiCommand(command) {
+  return [
+    "---",
+    "description: Show the openmsg address of this session",
+    `allowed-tools: Bash(${command} whoami)`,
+    "---",
+    WHOAMI_MARK,
+    `The openmsg address of this session: !\`${command} whoami\``,
+    "",
+    "Answer with that address alone, on one line.",
+    "",
+  ].join("\n");
+}
+
+function installWhoami(command) {
+  if (!fs.existsSync(path.dirname(path.dirname(WHOAMI_FILE)))) return null;
+  const before = fs.existsSync(WHOAMI_FILE) ? fs.readFileSync(WHOAMI_FILE, "utf8") : null;
+  if (before !== null && !before.includes(WHOAMI_MARK)) {
+    return { vendor: "claude", file: WHOAMI_FILE, action: "skipped (the file of the user)" };
+  }
+  fs.mkdirSync(path.dirname(WHOAMI_FILE), { recursive: true });
+  fs.writeFileSync(WHOAMI_FILE, whoamiCommand(command));
+  return { vendor: "claude", file: WHOAMI_FILE, action: before === null ? "created" : "updated" };
+}
+
+function uninstallWhoami() {
+  try {
+    if (!fs.readFileSync(WHOAMI_FILE, "utf8").includes(WHOAMI_MARK)) return null;
+  } catch {
+    return null;
+  }
+  fs.rmSync(WHOAMI_FILE);
+  return { vendor: "claude", file: WHOAMI_FILE, action: "removed" };
 }
 
 export function withoutOurs(groups, vendor = "claude") {
@@ -143,6 +191,8 @@ export function installHooks(command) {
     fs.writeFileSync(file, JSON.stringify(after, null, 2) + "\n");
     out.push({ vendor, file, action: before ? "updated" : "created" });
   }
+  const slash = installWhoami(command);
+  if (slash) out.push(slash);
   const old = removeOldGemini();
   if (old) out.push(old);
   return out;
@@ -176,6 +226,8 @@ export function uninstallHooks() {
     fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
     out.push({ vendor, file, action: "removed" });
   }
+  const slash = uninstallWhoami();
+  if (slash) out.push(slash);
   const old = removeOldGemini();
   if (old) out.push(old);
   return out;

@@ -54,6 +54,29 @@ export function claudeAgents() {
   return out;
 }
 
+// The name of one Claude session, from its record alone. The /whoami hook
+// needs it at once, so this reads no transcript and asks no other vendor.
+export function claudeSessionName(sessionId) {
+  for (const config of claudeConfigDirs()) {
+    const dir = path.join(config, "sessions");
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        if (rec.sessionId === sessionId) return rec.name ?? `claude-${rec.pid}`;
+      } catch {
+        // A record that cannot be read names nobody.
+      }
+    }
+  }
+  return null;
+}
+
 function claudeAgentsIn(config) {
   const dir = path.join(config, "sessions");
   let files = [];

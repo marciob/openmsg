@@ -5,8 +5,10 @@
 // 2. It gives the waiting messages to the agent, in the shape that the vendor
 //    expects at the end of a turn.
 // 3. It gives the project messages of the working directory to the agent.
-//    Claude Code runs the hook only for this, at the start of a session. A
-//    live Claude session takes every other message through its socket.
+//    Claude Code runs the hook for this at the start of a session. A live
+//    Claude session takes every other message through its socket.
+// 4. In Claude Code, it answers the prompt "/whoami" with the address of the
+//    session, before the model.
 //
 // Sources:
 // - Claude Code: https://code.claude.com/docs/en/hooks
@@ -15,7 +17,7 @@
 // - Antigravity CLI: https://antigravity.google/docs/hooks/
 import path from "node:path";
 import { register } from "./selfregistry.mjs";
-import { claudeAgents, agyAgents, agyName } from "./registry.mjs";
+import { claudeAgents, claudeSessionName, agyAgents, agyName } from "./registry.mjs";
 import * as mailbox from "./mailbox.mjs";
 import * as projectbox from "./projectbox.mjs";
 import { render, MAX_HOPS } from "./envelope.mjs";
@@ -92,6 +94,19 @@ function readEvent(vendor, input, eventArg = null) {
   };
 }
 
+// The prompt "/whoami" gets the address of the session, with no model call.
+// "decision: block" stops the prompt before the model. Claude Code shows the
+// reason to the user, and it does not add it to the context. Every other
+// prompt gets nothing, so Claude Code continues as usual. When the record of
+// the session is not found, the hook gives nothing, and the /whoami command
+// runs `openmsg whoami` as usual.
+function whoami(input, info) {
+  if (String(input.prompt ?? "").trim() !== "/whoami") return {};
+  if (info.id === "unknown") return {};
+  const name = claudeSessionName(info.id);
+  return name ? { decision: "block", reason: `claude:${name}` } : {};
+}
+
 function agentOf(vendor, { id, cwd }) {
   const base = cwd ? path.basename(cwd) : vendor;
   return { vendor, id, name: `${base}-${String(id).slice(-4)}`, cwd };
@@ -107,6 +122,8 @@ export async function runHook(vendor, eventArg = null) {
   }
   const info = readEvent(vendor, input, eventArg);
   const within = (m) => (m.openmsg?.hops?.length ?? 0) <= MAX_HOPS;
+
+  if (vendor === "claude" && info.event === "UserPromptSubmit") return whoami(input, info);
 
   if (vendor === "claude") {
     const taken = projectbox

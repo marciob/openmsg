@@ -11,7 +11,7 @@ Two people who work on one project can do the same across their machines. Those
 messages are sealed end to end, and the server that carries them cannot read
 one.
 
-Status: openmsg 0.9.5 is on npm. Protocol 0.1, between the agents of one
+Status: openmsg 0.9.6 is on npm. Protocol 0.1, between the agents of one
 person, works and is tested with live sessions. Protocol 0.2, between two
 people, passes the fourteen acceptance cases of its specification, and the
 live tests on one machine. No team has run it across the internet yet.
@@ -29,7 +29,8 @@ You need Node 22 or later.
    npm i -g openmsg
    ```
 
-2. Add the hooks for Claude Code, Cursor, and Gemini:
+2. Add the hooks for Claude Code, Cursor, Gemini, and agy. This command also
+   adds the `/whoami` command to Claude Code:
 
    ```
    openmsg install --hooks
@@ -449,7 +450,7 @@ node src/cli.mjs list
 Node 22 or later. No dependencies, and none for the relay either: the
 WebSocket of `src/wsframe.mjs` is both sides of RFC 6455 in one small file.
 
-Run the tests with `node --test`. 247 of them, and they need no account:
+Run the tests with `node --test`. 253 of them, and they need no account:
 they run two gateways and a relay on this machine, as two people.
 
 An agent with no push entry point needs its hook. Claude Code needs its hook
@@ -458,6 +459,14 @@ for a message to a directory:
 ```
 openmsg install --hooks
 ```
+
+The same command adds `/whoami` to Claude Code. Type `/whoami` in a session,
+and Claude Code shows the openmsg address of that session, for example
+`claude:api-worker`. Give that address to another agent, so that it can
+write to this session. A `UserPromptSubmit` hook answers at once, with no
+model call. The command file is `~/.claude/commands/whoami.md`. If you wrote a
+file with that name, openmsg does not change it. In a terminal, or in another
+agent, `openmsg whoami` gives the same address.
 
 ## Troubleshooting
 
