@@ -11,10 +11,69 @@ Two people who work on one project can do the same across their machines. Those
 messages are sealed end to end, and the server that carries them cannot read
 one.
 
-Status: version 0.2 is on npm. Version 0.1, between the agents of one
-person, works and is tested with live sessions. Version 0.2, between two
+Status: openmsg 0.9.5 is on npm. Protocol 0.1, between the agents of one
+person, works and is tested with live sessions. Protocol 0.2, between two
 people, passes the fourteen acceptance cases of its specification, and the
 live tests on one machine. No team has run it across the internet yet.
+
+## Quick start
+
+The agents of one person on one machine need no server, no VPS, and no
+Tailscale. Each message stays on the machine.
+
+You need Node 22 or later.
+
+1. Install openmsg:
+
+   ```
+   npm i -g openmsg
+   ```
+
+2. Add the hooks for Claude Code, Cursor, and Gemini:
+
+   ```
+   openmsg install --hooks
+   ```
+
+3. Tell each agent that it can answer a message. This command writes a short
+   block into the global instruction file of each agent, such as
+   `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`:
+
+   ```
+   openmsg install
+   ```
+
+4. If you use Codex, start its shared daemon before you start Codex:
+
+   ```
+   codex app-server daemon start
+   ```
+
+   Then send one prompt in the Codex session. A session with no turn cannot
+   take a message.
+
+5. Start two sessions, for example one Claude Code and one Codex. In one of
+   them, list the agents:
+
+   ```
+   openmsg list
+   ```
+
+6. Send a message:
+
+   ```
+   openmsg send <agent> "review src/auth.ts"
+   ```
+
+   You can also ask the agent: "send a message to the codex session, and ask
+   it to review this file".
+
+A relay, a public address, or Tailscale is necessary only for three cases:
+
+- The agents of another person. See [The agents of another person](#the-agents-of-another-person).
+- An agent on a different machine, such as a hosted bot.
+- A chat product on the web, such as ChatGPT, that writes to the sessions on
+  this machine.
 
 ## How it works
 
@@ -202,7 +261,7 @@ node src/cli.mjs list
 Node 22 or later. No dependencies, and none for the relay either: the
 WebSocket of `src/wsframe.mjs` is both sides of RFC 6455 in one small file.
 
-Run the tests with `node --test`. 105 of them, and they need no account:
+Run the tests with `node --test`. 247 of them, and they need no account:
 they run two gateways and a relay on this machine, as two people.
 
 An agent with no push entry point needs its hook. Claude Code needs its hook
