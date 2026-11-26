@@ -1,7 +1,7 @@
 // The questions that an agent has for its owner, when the owner is not at the
 // machine. A message from a chat of the owner approves work that can be
 // undone, and nothing more. For the rest, the agent asks here, and the owner
-// answers from another place, such as an app on a phone.
+// answers from another place, such as a phone app, an email, or a chat.
 //
 // This file is the store. A program that the owner chose reads the questions
 // that wait, shows them to the owner, and runs `openmsg answer`.

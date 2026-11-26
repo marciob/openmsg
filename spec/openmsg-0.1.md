@@ -504,7 +504,8 @@ owner. The owner is possibly not at the machine.
 1. `openmsg ask "<question>"` stores one question, with the session that
    asked. Only a session on the machine asks. The command does not wait.
 2. `openmsg asks` gives the questions that wait. A program that the owner
-   chose shows them to the owner, for example in an app on a phone.
+   chose shows them to the owner, for example in a phone app, an email, or a
+   chat.
 3. `openmsg answer <id> yes|no` stores the answer, and the session gets it as
    a message. The first line names the owner as the sender. The text after
    the second line of dashes says that the answer approves the one action of
