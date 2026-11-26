@@ -78,6 +78,8 @@ A relay, a public address, or Tailscale is necessary only for three cases:
 - A chat product on the web that writes to the sessions on this machine. See
   [ChatGPT](#chatgpt), [Claude on the web](#claude-on-the-web), and
   [Gemini on the web](#gemini-on-the-web-as-an-orchestrator).
+  An agent that takes an MCP connector, such as Dots from OpenAI or Muse
+  from Meta, can use the same server. Dots and Muse are not tested yet.
 
 How each case is protected:
 

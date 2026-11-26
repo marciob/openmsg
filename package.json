@@ -40,7 +40,10 @@
     "grok",
     "grokbot",
     "xai",
-    "webhook"
+    "webhook",
+    "mcp",
+    "openai-dots",
+    "meta-muse"
   ],
   "scripts": {
     "test": "node --test"
